@@ -69,9 +69,10 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=_CORS_ORIGINS,
-    allow_methods=["POST"],
-    allow_headers=["Content-Type"],
+    allow_origins=_CORS_ORIGINS if "*" not in _CORS_ORIGINS else ["*"],
+    allow_origin_regex=r"https://.*\.pages\.dev|https://.*\.onrender\.com|https://.*\.trycloudflare\.com|http://localhost.*|http://127\.0\.0\.1.*",
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["*"],
 )
 
 _buffers = SessionBufferStore()

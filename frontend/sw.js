@@ -14,7 +14,7 @@
 //
 // CACHE is versioned. Bump it whenever the shell's caching behaviour changes;
 // `activate` deletes every cache that is not the current one.
-const CACHE = "kinetiq-v5-shell-v3";
+const CACHE = "kinetiq-v5-shell-v4";
 
 const SHELL = [
   "./",
@@ -64,6 +64,7 @@ self.addEventListener("fetch", (e) => {
   // reach the network on their own terms; caching an assess response would be
   // actively wrong.
   if (url.origin !== self.location.origin) return;
+  if (url.pathname === "/health" || url.pathname.startsWith("/prototype/")) return;
 
   e.respondWith(
     fetch(req)

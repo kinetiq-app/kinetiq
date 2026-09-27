@@ -23,8 +23,13 @@ const isLocalHost = typeof window !== "undefined" && window.location && (window.
 let resolvedApi = queryApi || (CFG && CFG.API_BASE_URL) || "";
 if (!queryApi && typeof window !== "undefined" && window.location) {
   const host = window.location.hostname;
-  // If hosted via tunnel (e.g. trycloudflare) or local host, use same-origin!
-  if (host.includes("trycloudflare") || host === "localhost" || host === "127.0.0.1") {
+  // If hosted via Cloudflare Pages (*.pages.dev), tunnel, or local host, use same-origin!
+  if (
+    host.endsWith("pages.dev") ||
+    host.includes("trycloudflare") ||
+    host === "localhost" ||
+    host === "127.0.0.1"
+  ) {
     resolvedApi = window.location.origin;
   }
 }
@@ -307,16 +312,19 @@ async function pingHealth(timeoutMs = HEALTH_TIMEOUT_MS) {
   const t = setTimeout(() => ctrl.abort(), timeoutMs);
   try {
     const res = await fetch(`${API}/health`, { signal: ctrl.signal, cache: "no-store" });
-    if (res.ok) {
-      try {
-        const h = await res.json();
+    if (!res.ok) return false;
+    try {
+      const h = await res.json();
+      if (h && h.status === "ok") {
         if (Number.isFinite(h.session_max_frames)) sessionMaxFrames = h.session_max_frames;
-      } catch {
-        // an older API without the field: fine, we fall back to reacting to a 413
+        return true;
       }
+    } catch {
+      // Fall through to res.ok if json parsing fails
     }
     return res.ok;
-  } catch {
+  } catch (err) {
+    console.warn("[kinetiq] pingHealth probe failed:", err && err.message);
     return false;
   } finally {
     clearTimeout(t);

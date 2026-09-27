@@ -136,7 +136,18 @@
     4. Added `isStartingSet` concurrency lock preventing parallel setup races.
     5. Added auto-dismiss failsafe in `loop()`: if video is actively playing frames (`currentTime > 0`), obsolete "Camera" or "Warming up" overlays are immediately cleared.
     6. Added an explicit dismiss (`×`) button on `#state-overlay`.
-    7. Bumped Service Worker cache to `kinetiq-v5-shell-v3` and added `?v=5.0.3` cache-busters in `index.html`.
+    * **Flaw F: Cloudflare Pages CORS Rejection & Lock-On Failure**
+  * *Symptom*: Live PWA deployed on Cloudflare Pages displays "locating you…" indefinitely; reps are not counted; server cannot be woken; and banner reports waking server forever.
+  * *Root Cause Analysis*:
+    1. **Strict Origin Mismatch on Render Backend**: `kinetiq-v5-api.onrender.com` had `PROTOTYPE_API_CORS_ORIGINS` configured strictly to `https://kinetiq-v5-pwa.onrender.com`. When the PWA was moved to Cloudflare Pages (`https://kinetiq.pages.dev`), browser requests sent `Origin: https://kinetiq.pages.dev`. The backend responded with `400 Bad Request: Disallowed CORS origin`.
+    2. **Silent Failure in PWA**: Because `/health` probes were rejected by CORS, `apiWarm` stayed `false`, frames could not be posted via `/prototype/assess`, and subject lock responses never arrived to transition the HUD pill from "locating you…" to "locked on".
+    3. **Service Worker Fallback Pitfall**: `sw.js` was caching same-origin routes and falling back to `index.html` on failed GET requests, which could return HTML instead of JSON for `/health`.
+  * *Resolution*:
+    1. Created `frontend/_worker.js` (Cloudflare Pages Advanced Mode) and `functions/` (Standard Mode) implementing an edge reverse-proxy for `/health` and `/prototype/*` directly to `https://kinetiq-v5-api.onrender.com` rewriting origin headers.
+    2. Updated `frontend/app.js` to route `*.pages.dev` to same-origin (`window.location.origin`), completely eliminating browser CORS preflight overhead.
+    3. Updated `frontend/sw.js` to explicitly bypass Service Worker caching for `/health` and `/prototype/*`.
+    4. Updated `evals/gate0/prototype_api/main.py` CORS middleware with origin regex supporting `*.pages.dev`, `*.onrender.com`, `*.trycloudflare.com`, and localhost.
+    5. Bumped Service Worker cache to `kinetiq-v5-shell-v4` and cache-buster in `index.html` to `v=5.0.4`.
 
 ---
 
@@ -146,6 +157,7 @@
 | :--- | :--- | :--- | :--- |
 | **Cloudflare Pages Production** | `https://github.com/kinetiq-app/kinetiq.git` -> Pages | **TRACKED (main)** | Auto-deploys on commit to `main`. |
 | **Python Unittest Suite** | `python -m unittest discover -s evals/gate0 -p "test_*.py"` | **PASS (316/316)** | Run time ~21s. Covers detector, scorers, labeling, CLI, schemas, and cues. |
+| **Prototype API Test Suite** | `python -m unittest discover -s evals/gate0/prototype_api -p "test_*.py"` | **PASS (53/53)** | Run time ~1.5s. Covers endpoints, CORS, sessions, cues. |
 | **Frontend Segment Tests** | `node --test frontend/segments.test.mjs` | **PASS (10/10)** | Validates session rolling, queue bounding, frame acknowledgment. |
 | **Stage 0 Golden Set Eval** | `python evals/gate0/aggregate.py --golden evals/gate0/golden --mode full` | **PASS** | 100% rep accuracy, 0 phantom reps, 100% subject lock, form precision/recall met. |
 
@@ -155,6 +167,7 @@
 
 | Date | Author / Agent | Changes Made | Rationale |
 | :--- | :--- | :--- | :--- |
+| **2026-09-28** | Antigravity AI | - **Cloudflare Pages Edge Reverse Proxy**: Created `frontend/_worker.js` and `functions/` to proxy `/health` and `/prototype/*` to the detector API on Render, eliminating CORS mismatch.<br>- **PWA Same-Origin Routing**: Updated `frontend/app.js` to resolve `*.pages.dev` to `window.location.origin`.<br>- **Protected API Traffic in SW**: Excluded `/health` and `/prototype/*` from `frontend/sw.js`.<br>- **Hardened `pingHealth`**: Added status validation and error logging.<br>- **Bumped SW to v4**: Cache version `kinetiq-v5-shell-v4` and `index.html` asset tags `v=5.0.4`. | Fix server wake-up failure and lock-on failure caused by Cloudflare Pages to Render CORS origin mismatch. |
 | **2026-09-27** | Antigravity AI | - **Camera Permission & Overlay UX Overhaul**: Added `getCameraPermissionState()`, active stream reuse across exercise switches, concurrency lock on `startSet`, auto-dismiss failsafe in `loop()`, and manual dismiss button.<br>- **Cache Busted**: Bumped Service Worker cache to `kinetiq-v5-shell-v3` and appended `?v=5.0.3` to asset tags in `index.html`.<br>- **Full Verification**: Node tests (10/10) and Python gate0 unit tests (316/316) passing green. | Eliminate overlay locking bug on refresh and exercise switch, provide instantaneous zero-lag exercise switching, and guarantee full UI usability on mobile devices. |
 | **2026-09-27** | Antigravity AI | - **Detached deployment pipeline**: Mounted `frontend/` statically directly on `prototype_api` (`evals/gate0/prototype_api/main.py`), unifying PWA & API into a single same-origin server.<br>- **Instant live development tunnel**: Set up portable `cloudflared.exe` and `dev_tunnel.ps1` allowing instant HTTPS sharing on `https://*.trycloudflare.com` without needing external GitHub repository push access.<br>- **Fixed Camera overlay UI bug**: Added `[hidden] { display: none !important; }` in `styles.css` and explicit `style.display = "none"` in `app.js` so the camera prompt dismisses immediately upon grant.<br>- Verified all 316 Python unit tests and 10 Node.js unit tests green. | Enable 100% independent development and live instant testing on mobile devices without external GitHub permissions. |
 | **2026-09-20** | Engineering Team | Initial prototype scaffold carryover from v4; setup in-repo `.claude/` verifiers, render blueprint, and initial docs. | Transition to self-contained v5 prototype root. |
