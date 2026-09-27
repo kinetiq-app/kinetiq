@@ -36,9 +36,9 @@ export default {
       try {
         const response = await fetch(backendRequest);
         const newHeaders = new Headers(response.headers);
-        newHeaders.set("Access-Control-Allow-Origin": "*");
-        newHeaders.set("Access-Control-Allow-Methods": "GET, POST, OPTIONS");
-        newHeaders.set("Access-Control-Allow-Headers": "Content-Type, Authorization");
+        newHeaders.set("Access-Control-Allow-Origin", "*");
+        newHeaders.set("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+        newHeaders.set("Access-Control-Allow-Headers", "Content-Type, Authorization");
 
         return new Response(response.body, {
           status: response.status,
