@@ -239,3 +239,13 @@ def assess(body: AssessRequest) -> AssessResponse:
             for r in detected.reps
         ],
     )
+
+
+# Mount frontend static PWA files if frontend directory exists in the repo root
+from pathlib import Path
+from fastapi.staticfiles import StaticFiles
+
+_FRONTEND_DIR = Path(__file__).resolve().parents[3] / "frontend"
+if _FRONTEND_DIR.is_dir():
+    app.mount("/", StaticFiles(directory=str(_FRONTEND_DIR), html=True), name="frontend")
+

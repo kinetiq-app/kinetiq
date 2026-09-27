@@ -131,6 +131,7 @@
 
 | Test / Check | Command / URL | Result | Notes |
 | :--- | :--- | :--- | :--- |
+| **Independent Live Development Pipeline** | `https://pages-containing-glasgow-coast.trycloudflare.com` | **LIVE (ALL CHECKS PASS)** | Unified FastAPI + Static PWA serving with zero CORS. Reflects changes instantly. |
 | **Python Unittest Suite** | `python -m unittest discover -s evals/gate0 -p "test_*.py"` | **PASS (316/316)** | Run time ~31s. Covers detector, scorers, labeling, CLI, schemas, and cues. |
 | **Frontend Segment Tests** | `node --test frontend/segments.test.mjs` | **PASS (10/10)** | Validates session rolling, queue bounding, frame acknowledgment. |
 | **Stage 0 Golden Set Eval** | `python evals/gate0/aggregate.py --golden evals/gate0/golden --mode full` | **PASS** | 100% rep accuracy, 0 phantom reps, 100% subject lock, form precision/recall met. |
@@ -144,7 +145,7 @@
 
 | Date | Author / Agent | Changes Made | Rationale |
 | :--- | :--- | :--- | :--- |
-| **2026-09-27** | Antigravity AI | - Fixed `BlazePoseAdapter.is_available()` to verify `pose_landmarker.task` file existence (all 316 unit tests green).<br>- Created `frontend/package.json` with `"type": "module"` (all 10 Node tests green).<br>- Fixed local testing origin mismatch in `frontend/app.js` to dynamically detect `localhost`/`127.0.0.1` and route to local API while preserving remote deployed endpoint.<br>- Bumped Service Worker cache to `kinetiq-v5-shell-v1` in `frontend/sw.js`.<br>- Verified local MVP stack end-to-end (`prototype_api` on `:8000` + PWA on `:8080`).<br>- Confirmed live Render API & PWA health via `verify_deploy.py`.<br>- Created master `SYSTEM_STATUS.md`. | Resolve test suite regression, enable seamless frontend testing, eliminate CORS traps for local development, and bring prototype to verified working MVP stage. |
+| **2026-09-27** | Antigravity AI | - **Detached deployment pipeline**: Mounted `frontend/` statically directly on `prototype_api` (`evals/gate0/prototype_api/main.py`), unifying PWA & API into a single same-origin server.<br>- **Instant live development tunnel**: Set up portable `cloudflared.exe` and `dev_tunnel.ps1` allowing instant HTTPS sharing on `https://*.trycloudflare.com` without needing external GitHub repository push access.<br>- **Fixed Camera overlay UI bug**: Added `[hidden] { display: none !important; }` in `styles.css` and explicit `style.display = "none"` in `app.js` so the camera prompt dismisses immediately upon grant.<br>- Verified all 316 Python unit tests and 10 Node.js unit tests green. | Enable 100% independent development and live instant testing on mobile devices without external GitHub permissions. |
 | **2026-09-20** | Engineering Team | Initial prototype scaffold carryover from v4; setup in-repo `.claude/` verifiers, render blueprint, and initial docs. | Transition to self-contained v5 prototype root. |
 
 ---

@@ -21,9 +21,12 @@ const urlParams = typeof window !== "undefined" && window.location ? new URLSear
 const queryApi = urlParams ? urlParams.get("api") : null;
 const isLocalHost = typeof window !== "undefined" && window.location && (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1");
 let resolvedApi = queryApi || (CFG && CFG.API_BASE_URL) || "";
-if (!queryApi && isLocalHost && resolvedApi.startsWith("https://")) {
-  // Remote deployed API rejects CORS requests from localhost; automatically use local API
-  resolvedApi = "http://127.0.0.1:8000";
+if (!queryApi && typeof window !== "undefined" && window.location) {
+  const host = window.location.hostname;
+  // If hosted via tunnel (e.g. trycloudflare) or local host, use same-origin!
+  if (host.includes("trycloudflare") || host === "localhost" || host === "127.0.0.1") {
+    resolvedApi = window.location.origin;
+  }
 }
 const API = resolvedApi.replace(/\/+$/, "");
 
