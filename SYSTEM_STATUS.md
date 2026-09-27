@@ -149,13 +149,27 @@
     4. Updated `evals/gate0/prototype_api/main.py` CORS middleware with origin regex supporting `*.pages.dev`, `*.onrender.com`, `*.trycloudflare.com`, and localhost.
     5. Bumped Service Worker cache to `kinetiq-v5-shell-v4` and cache-buster in `index.html` to `v=5.0.4`.
 
+* **Flaw G: Cloudflare Worker Assets Build Error (`Uploading Pages _worker.js as an asset`)**
+  * *Symptom*: Build pipeline failed during `npx wrangler deploy` with: `✘ [ERROR] Uploading a Pages _worker.js file as an asset... This could expose your private server-side code to the public Internet.`
+  * *Root Cause Analysis*:
+    1. The project uses Cloudflare Workers with Static Assets (`npx wrangler deploy`).
+    2. In the absence of an explicit `wrangler.jsonc`, Wrangler fell back to non-interactive defaults in CI and treated `frontend/` strictly as an assets directory.
+    3. Placing `_worker.js` inside `frontend/` triggered Wrangler's asset scanner error.
+    4. Having a top-level `functions/` directory prompted Wrangler for interactive confirmation, which defaulted to "no" in CI.
+  * *Resolution*:
+    1. Added an explicit root `wrangler.jsonc` declaring `"main": "worker.js"` and `"assets": { "directory": "frontend", "binding": "ASSETS" }`, preventing non-interactive prompt fallbacks.
+    2. Moved the edge reverse proxy entry point to root `worker.js` (outside `frontend/`).
+    3. Removed `frontend/_worker.js` and `functions/`.
+    4. Added `frontend/.assetsignore` ignoring `_worker.js`.
+    5. Updated `frontend/app.js` to recognize `*.workers.dev` origins for same-origin routing.
+
 ---
 
 ## 5. Current Verification & Health Matrix
 
 | Test / Check | Command / URL | Result | Notes |
 | :--- | :--- | :--- | :--- |
-| **Cloudflare Pages Production** | `https://github.com/kinetiq-app/kinetiq.git` -> Pages | **TRACKED (main)** | Auto-deploys on commit to `main`. |
+| **Cloudflare Production Pipeline** | `https://github.com/kinetiq-app/kinetiq.git` -> Wrangler | **TRACKED (main)** | Auto-deploys via root `wrangler.jsonc` + `worker.js`. |
 | **Python Unittest Suite** | `python -m unittest discover -s evals/gate0 -p "test_*.py"` | **PASS (316/316)** | Run time ~21s. Covers detector, scorers, labeling, CLI, schemas, and cues. |
 | **Prototype API Test Suite** | `python -m unittest discover -s evals/gate0/prototype_api -p "test_*.py"` | **PASS (53/53)** | Run time ~1.5s. Covers endpoints, CORS, sessions, cues. |
 | **Frontend Segment Tests** | `node --test frontend/segments.test.mjs` | **PASS (10/10)** | Validates session rolling, queue bounding, frame acknowledgment. |
@@ -167,6 +181,7 @@
 
 | Date | Author / Agent | Changes Made | Rationale |
 | :--- | :--- | :--- | :--- |
+| **2026-09-28** | Antigravity AI | - **Cloudflare Worker Static Assets Configuration**: Added root `wrangler.jsonc` and `worker.js`, removed `frontend/_worker.js` and `functions/`, and added `frontend/.assetsignore`.<br>- **CI Non-Interactive Clean Build**: Prevents Wrangler from prompting in CI and eliminates the `Uploading a Pages _worker.js file as an asset` fatal error.<br>- **Supported `workers.dev` Origins**: Updated `frontend/app.js` to resolve `*.workers.dev` to `window.location.origin`. | Resolve Cloudflare deployment build failure while preserving edge reverse-proxying of detector API endpoints. |
 | **2026-09-28** | Antigravity AI | - **Cloudflare Pages Edge Reverse Proxy**: Created `frontend/_worker.js` and `functions/` to proxy `/health` and `/prototype/*` to the detector API on Render, eliminating CORS mismatch.<br>- **PWA Same-Origin Routing**: Updated `frontend/app.js` to resolve `*.pages.dev` to `window.location.origin`.<br>- **Protected API Traffic in SW**: Excluded `/health` and `/prototype/*` from `frontend/sw.js`.<br>- **Hardened `pingHealth`**: Added status validation and error logging.<br>- **Bumped SW to v4**: Cache version `kinetiq-v5-shell-v4` and `index.html` asset tags `v=5.0.4`. | Fix server wake-up failure and lock-on failure caused by Cloudflare Pages to Render CORS origin mismatch. |
 | **2026-09-27** | Antigravity AI | - **Camera Permission & Overlay UX Overhaul**: Added `getCameraPermissionState()`, active stream reuse across exercise switches, concurrency lock on `startSet`, auto-dismiss failsafe in `loop()`, and manual dismiss button.<br>- **Cache Busted**: Bumped Service Worker cache to `kinetiq-v5-shell-v3` and appended `?v=5.0.3` to asset tags in `index.html`.<br>- **Full Verification**: Node tests (10/10) and Python gate0 unit tests (316/316) passing green. | Eliminate overlay locking bug on refresh and exercise switch, provide instantaneous zero-lag exercise switching, and guarantee full UI usability on mobile devices. |
 | **2026-09-27** | Antigravity AI | - **Detached deployment pipeline**: Mounted `frontend/` statically directly on `prototype_api` (`evals/gate0/prototype_api/main.py`), unifying PWA & API into a single same-origin server.<br>- **Instant live development tunnel**: Set up portable `cloudflared.exe` and `dev_tunnel.ps1` allowing instant HTTPS sharing on `https://*.trycloudflare.com` without needing external GitHub repository push access.<br>- **Fixed Camera overlay UI bug**: Added `[hidden] { display: none !important; }` in `styles.css` and explicit `style.display = "none"` in `app.js` so the camera prompt dismisses immediately upon grant.<br>- Verified all 316 Python unit tests and 10 Node.js unit tests green. | Enable 100% independent development and live instant testing on mobile devices without external GitHub permissions. |

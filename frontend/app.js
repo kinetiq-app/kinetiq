@@ -26,6 +26,7 @@ if (!queryApi && typeof window !== "undefined" && window.location) {
   // If hosted via Cloudflare Pages (*.pages.dev), tunnel, or local host, use same-origin!
   if (
     host.endsWith("pages.dev") ||
+    host.endsWith("workers.dev") ||
     host.includes("trycloudflare") ||
     host === "localhost" ||
     host === "127.0.0.1"

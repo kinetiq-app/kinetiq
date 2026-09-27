@@ -1,6 +1,6 @@
-// Cloudflare Pages Advanced Mode _worker.js
-// Handles reverse-proxying API calls (/health and /prototype/*) to the detector backend,
-// while serving static PWA assets for all other routes.
+// Cloudflare Worker entry point for kinetiq PWA with static assets
+// Proxies backend detector API endpoints (/health and /prototype/*) to Render,
+// and serves static assets for all client PWA routes.
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
@@ -18,13 +18,12 @@ export default {
       });
     }
 
-    // Proxy API routes to the Render detector backend
+    // Proxy API routes (/health and /prototype/*) to the Render detector backend
     if (url.pathname === "/health" || url.pathname.startsWith("/prototype/")) {
       const targetUrl = new URL(url.pathname + url.search, "https://kinetiq-v5-api.onrender.com");
 
       const headers = new Headers(request.headers);
       headers.set("Host", "kinetiq-v5-api.onrender.com");
-      // Use origin accepted by Render's backend
       headers.set("Origin", "https://kinetiq-v5-pwa.onrender.com");
 
       const backendRequest = new Request(targetUrl.toString(), {
@@ -57,7 +56,7 @@ export default {
       }
     }
 
-    // Fallback: serve static assets from Cloudflare Pages
+    // Fallback: serve static assets from the frontend directory
     return env.ASSETS.fetch(request);
   },
 };
