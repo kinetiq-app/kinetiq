@@ -82,7 +82,7 @@ function show(name) {
   for (const s of Object.values(screens)) s.classList.remove("active");
   screens[name].classList.add("active");
 }
-function setState(title, msg, actionLabel, actionFn) {
+function setState(title, msg, actionLabel, actionFn, allowDismiss = false) {
   $("state-title").textContent = title;
   $("state-msg").textContent = msg || "";
   const btn = $("state-action");
@@ -95,6 +95,17 @@ function setState(title, msg, actionLabel, actionFn) {
     btn.hidden = true;
     btn.style.display = "none";
   }
+  const dismissBtn = $("state-dismiss");
+  if (dismissBtn) {
+    if (allowDismiss || running) {
+      dismissBtn.hidden = false;
+      dismissBtn.style.display = "";
+      dismissBtn.onclick = () => clearState();
+    } else {
+      dismissBtn.hidden = true;
+      dismissBtn.style.display = "none";
+    }
+  }
   const el = $("state-overlay");
   el.hidden = false;
   el.style.display = "flex";
@@ -103,6 +114,11 @@ function clearState() {
   const el = $("state-overlay");
   el.hidden = true;
   el.style.display = "none";
+  const dismissBtn = $("state-dismiss");
+  if (dismissBtn) {
+    dismissBtn.hidden = true;
+    dismissBtn.style.display = "none";
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -131,20 +147,72 @@ async function loadSeverities() {
 }
 
 // ---------------------------------------------------------------------------
-// camera
+// camera & permissions
+async function getCameraPermissionState() {
+  if (navigator.permissions && navigator.permissions.query) {
+    try {
+      const p = await navigator.permissions.query({ name: "camera" });
+      return p.state; // 'granted', 'prompt', 'denied'
+    } catch {
+      return "prompt";
+    }
+  }
+  return "prompt";
+}
+
+let streamIdleTimer = null;
+function scheduleCameraRelease() {
+  clearTimeout(streamIdleTimer);
+  streamIdleTimer = setTimeout(() => {
+    if (!running) stopCamera(true);
+  }, 45000);
+}
+
+function syncOverlayDimensions() {
+  if (video.videoWidth > 0 && video.videoHeight > 0) {
+    overlay.width = video.videoWidth;
+    overlay.height = video.videoHeight;
+  } else {
+    video.onloadedmetadata = () => {
+      overlay.width = video.videoWidth || 640;
+      overlay.height = video.videoHeight || 480;
+    };
+  }
+}
+
 async function startCamera() {
+  // If active stream already exists with live tracks, reuse it instantly!
+  if (stream && stream.active && stream.getVideoTracks().some((t) => t.readyState === "live")) {
+    if (video.srcObject !== stream) {
+      video.srcObject = stream;
+    }
+    try {
+      await video.play();
+    } catch {}
+    syncOverlayDimensions();
+    return;
+  }
+
   stream = await navigator.mediaDevices.getUserMedia({
     video: { facingMode: "user", width: { ideal: 640 }, height: { ideal: 480 } },
     audio: false,
   });
   video.srcObject = stream;
   await video.play();
-  overlay.width = video.videoWidth;
-  overlay.height = video.videoHeight;
+  syncOverlayDimensions();
 }
-function stopCamera() {
-  if (stream) stream.getTracks().forEach((t) => t.stop());
-  stream = null;
+
+function stopCamera(releaseTracks = false) {
+  if (video) {
+    try {
+      video.pause();
+    } catch {}
+  }
+  if (releaseTracks && stream) {
+    stream.getTracks().forEach((t) => t.stop());
+    stream = null;
+    if (video) video.srcObject = null;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -197,6 +265,13 @@ function bboxOf(kp) {
 // detection loop
 function loop() {
   if (!running) return;
+  // Failsafe auto-dismiss: if video is actively playing frames, never keep a "Camera" or "Warming up" overlay visible
+  if (video.currentTime > 0) {
+    const title = $("state-title").textContent;
+    if (title === "Camera" || title === "Warming up") {
+      clearState();
+    }
+  }
   const now = performance.now();
   if (video.currentTime !== lastVideoTs) {
     lastVideoTs = video.currentTime;
@@ -459,36 +534,60 @@ function drawSkeleton(lm) {
 }
 
 // ---------------------------------------------------------------------------
+let isStartingSet = false;
+
+// ---------------------------------------------------------------------------
 // start / stop a set
 async function startSet(ex) {
-  exercise = ex;
-  sessionId = newSessionId();
-  firstPost = true;
-  droppedFrames = 0;
-  tracker = createSetTracker(() => sessionMaxFrames, {
-    rollAt: CFG.SESSION_ROLL_AT,
-    forceRollAt: CFG.SESSION_FORCE_ROLL_AT,
-  });
-  frameBuffer = [];
-  lastResponse = null;
-  lastVideoTs = -1;
-  failStreak = 0;
-  nextAttemptAt = 0;
-  flushInFlight = false;
-  banner(null);
-  $("hud-exercise").textContent = ex;
-  $("rep-count").textContent = "0";
-  $("phase").textContent = "—";
-  $("cue").hidden = true;
-  $("flags").innerHTML = "";
-  show("live");
+  if (isStartingSet) return;
+  isStartingSet = true;
 
   try {
-    setState("Warming up", "Loading the on-device pose model…");
-    await loadModel();
-    setState("Camera", "Allow camera access to begin. Video stays on your device.");
-    await startCamera();
+    clearTimeout(streamIdleTimer);
+    exercise = ex;
+    sessionId = newSessionId();
+    firstPost = true;
+    droppedFrames = 0;
+    tracker = createSetTracker(() => sessionMaxFrames, {
+      rollAt: CFG.SESSION_ROLL_AT,
+      forceRollAt: CFG.SESSION_FORCE_ROLL_AT,
+    });
+    frameBuffer = [];
+    lastResponse = null;
+    lastVideoTs = -1;
+    failStreak = 0;
+    nextAttemptAt = 0;
+    flushInFlight = false;
+    banner(null);
     clearState();
+
+    $("hud-exercise").textContent = ex;
+    $("rep-count").textContent = "0";
+    $("phase").textContent = "—";
+    $("cue").hidden = true;
+    $("flags").innerHTML = "";
+    show("live");
+
+    // 1. Pose model: only show warmup overlay if landmarker is not yet in memory
+    if (!landmarker) {
+      setState("Warming up", "Loading the on-device pose model…");
+      await loadModel();
+      clearState();
+    }
+
+    // 2. Camera setup: only display camera permission prompt if permission is not yet granted
+    const isStreamActive = stream && stream.active && stream.getVideoTracks().some((t) => t.readyState === "live");
+    if (!isStreamActive) {
+      const permState = await getCameraPermissionState();
+      if (permState !== "granted") {
+        setState("Camera", "Allow camera access to begin. Video stays on your device.", null, null, true);
+      }
+      await startCamera();
+      clearState();
+    } else {
+      await startCamera();
+      clearState();
+    }
 
     // Wake the detector in the background if not already awake.
     // Use the non-blocking banner strip so the camera view and skeleton remain fully visible!
@@ -498,6 +597,11 @@ async function startSet(ex) {
         if (awake) banner(null);
       }).catch(() => {});
     }
+
+    running = true;
+    requestAnimationFrame(loop);
+    if (postTimer) clearInterval(postTimer);
+    postTimer = setInterval(flush, CFG.POST_INTERVAL_MS);
   } catch (err) {
     if (err && (err.name === "NotAllowedError" || err.name === "SecurityError")) {
       setState(
@@ -509,30 +613,36 @@ async function startSet(ex) {
     } else {
       setState("Couldn't start", String(err.message || err), "Back", backToPicker);
     }
-    return;
+  } finally {
+    isStartingSet = false;
   }
-
-  running = true;
-  requestAnimationFrame(loop);
-  postTimer = setInterval(flush, CFG.POST_INTERVAL_MS);
 }
 
 async function stopSet() {
   running = false;
-  clearInterval(postTimer);
-  postTimer = null;
+  if (postTimer) {
+    clearInterval(postTimer);
+    postTimer = null;
+  }
+  clearState();
   // Wait out any POST already in flight, then deliver whatever is still queued.
   for (let i = 0; i < 50 && flushInFlight; i++) await new Promise((r) => setTimeout(r, 100));
   await flush({ final: true }); // final flush so the last reps are counted
-  stopCamera();
+  stopCamera(false); // keep stream warm for next exercise, pause video
+  scheduleCameraRelease();
   octx.clearRect(0, 0, overlay.width, overlay.height);
   renderSummary(lastResponse);
   show("summary");
 }
+
 function backToPicker() {
   running = false;
-  clearInterval(postTimer);
-  stopCamera();
+  if (postTimer) {
+    clearInterval(postTimer);
+    postTimer = null;
+  }
+  stopCamera(false);
+  scheduleCameraRelease();
   clearState();
   banner(null);
   show("picker");
@@ -582,7 +692,13 @@ document.querySelectorAll(".exercise-card").forEach((btn) => {
 });
 $("btn-stop").addEventListener("click", stopSet);
 $("btn-back").addEventListener("click", backToPicker);
-$("btn-again").addEventListener("click", () => show("picker"));
+$("btn-again").addEventListener("click", () => {
+  clearState();
+  banner(null);
+  show("picker");
+});
+
+window.addEventListener("pagehide", () => stopCamera(true));
 
 loadSeverities();
 
@@ -600,7 +716,7 @@ wakeApi().catch(() => {});
 if ("serviceWorker" in navigator) {
   let reloadedForUpdate = false;
   navigator.serviceWorker.addEventListener("controllerchange", () => {
-    if (reloadedForUpdate) return;
+    if (reloadedForUpdate || running || isStartingSet) return;
     reloadedForUpdate = true;
     window.location.reload();
   });

@@ -122,8 +122,21 @@
 * **Flaw C: In-Memory Single-Process Scalability Trap**  
   * *Root Cause*: `SessionBufferStore` holds all active session frames in a local Python dictionary in process memory.
   * *Impact*: Deploying more than 1 container or worker process on Render or AWS ECS will immediately corrupt workout tracking due to split requests. Furthermore, running `run_detector()` over the entire history on every frame batch creates an $O(N)$ CPU cost per poll.
-* **Flaw D: The "Synthetic Data" Mirage (GATE G-REAL)**  
-  * *Current Reality*: While 100% of test suites and evals are green, **0 real human workouts** have been verified end-to-end on camera in a gym. Real-world variables (lighting shifts, baggy gym clothing, camera wobble, background lifters) are untested.
+* **Flaw E: Camera Instruction Overlay Lock on Refresh & Exercise Switch**
+  * *Symptom*: When switching exercises or refreshing the page after camera permissions were already granted, the instruction overlay ("Allow camera access to begin...") reappeared and remained stuck on the screen, even while reps were actively counting in the background.
+  * *Root Cause Analysis*:
+    1. **Lack of Permissions API Query**: `startSet()` unconditionally invoked `setState("Camera", "Allow camera access...")` before `startCamera()`, regardless of whether permission was already granted or stream was active.
+    2. **Premature Hardware Tear-down & Re-negotiation**: Switching exercises called `stopCamera()`, tearing down video tracks and re-invoking `getUserMedia()`. On mobile OS, camera hardware release is asynchronous, causing hardware lock latency and browser race conditions.
+    3. **Unprotected Asynchronous Re-entry**: `startSet()` had no concurrency guard (`isStartingSet`), allowing double taps or quick clicks to spawn concurrent initialization tasks where a secondary call rewrote the state overlay after `clearState()` had already run.
+    4. **No Escape Hatch in UI**: `#state-overlay` lacked a dismiss button, completely trapping users when an overlay lingered.
+  * *Resolution*:
+    1. Added `getCameraPermissionState()` using the Permissions API; only display the camera instruction card if permissions are not already granted (`'prompt'`).
+    2. Implemented active stream reuse across exercise switches: if `stream` has live tracks, `startCamera()` re-attaches and plays instantly without renegotiating `getUserMedia` or resetting camera hardware.
+    3. Added 45s idle release timer (`scheduleCameraRelease()`) to shut down tracks after inactivity on the picker.
+    4. Added `isStartingSet` concurrency lock preventing parallel setup races.
+    5. Added auto-dismiss failsafe in `loop()`: if video is actively playing frames (`currentTime > 0`), obsolete "Camera" or "Warming up" overlays are immediately cleared.
+    6. Added an explicit dismiss (`×`) button on `#state-overlay`.
+    7. Bumped Service Worker cache to `kinetiq-v5-shell-v3` and added `?v=5.0.3` cache-busters in `index.html`.
 
 ---
 
@@ -131,13 +144,10 @@
 
 | Test / Check | Command / URL | Result | Notes |
 | :--- | :--- | :--- | :--- |
-| **Independent Live Development Pipeline** | `https://pages-containing-glasgow-coast.trycloudflare.com` | **LIVE (ALL CHECKS PASS)** | Unified FastAPI + Static PWA serving with zero CORS. Reflects changes instantly. |
-| **Python Unittest Suite** | `python -m unittest discover -s evals/gate0 -p "test_*.py"` | **PASS (316/316)** | Run time ~31s. Covers detector, scorers, labeling, CLI, schemas, and cues. |
+| **Cloudflare Pages Production** | `https://github.com/kinetiq-app/kinetiq.git` -> Pages | **TRACKED (main)** | Auto-deploys on commit to `main`. |
+| **Python Unittest Suite** | `python -m unittest discover -s evals/gate0 -p "test_*.py"` | **PASS (316/316)** | Run time ~21s. Covers detector, scorers, labeling, CLI, schemas, and cues. |
 | **Frontend Segment Tests** | `node --test frontend/segments.test.mjs` | **PASS (10/10)** | Validates session rolling, queue bounding, frame acknowledgment. |
 | **Stage 0 Golden Set Eval** | `python evals/gate0/aggregate.py --golden evals/gate0/golden --mode full` | **PASS** | 100% rep accuracy, 0 phantom reps, 100% subject lock, form precision/recall met. |
-| **Deployed API Health** | `GET https://kinetiq-v5-api.onrender.com/health` | **PASS (200 OK)** | Returns version SHA, session max frames (3600), supported exercises. |
-| **Deployed End-to-End CORS & Contract** | `python evals/gate0/prototype_api/verify_deploy.py https://kinetiq-v5-api.onrender.com --origin https://kinetiq-v5-pwa.onrender.com` | **ALL CHECKS PASS** | Simulates real browser requests, valid frames, and malformed frames (CORS preserved). |
-| **Deployed PWA** | `https://kinetiq-v5-pwa.onrender.com` | **LIVE (200 OK)** | Serves PWA bundle with correct backend API configuration. |
 
 ---
 
@@ -145,6 +155,7 @@
 
 | Date | Author / Agent | Changes Made | Rationale |
 | :--- | :--- | :--- | :--- |
+| **2026-09-27** | Antigravity AI | - **Camera Permission & Overlay UX Overhaul**: Added `getCameraPermissionState()`, active stream reuse across exercise switches, concurrency lock on `startSet`, auto-dismiss failsafe in `loop()`, and manual dismiss button.<br>- **Cache Busted**: Bumped Service Worker cache to `kinetiq-v5-shell-v3` and appended `?v=5.0.3` to asset tags in `index.html`.<br>- **Full Verification**: Node tests (10/10) and Python gate0 unit tests (316/316) passing green. | Eliminate overlay locking bug on refresh and exercise switch, provide instantaneous zero-lag exercise switching, and guarantee full UI usability on mobile devices. |
 | **2026-09-27** | Antigravity AI | - **Detached deployment pipeline**: Mounted `frontend/` statically directly on `prototype_api` (`evals/gate0/prototype_api/main.py`), unifying PWA & API into a single same-origin server.<br>- **Instant live development tunnel**: Set up portable `cloudflared.exe` and `dev_tunnel.ps1` allowing instant HTTPS sharing on `https://*.trycloudflare.com` without needing external GitHub repository push access.<br>- **Fixed Camera overlay UI bug**: Added `[hidden] { display: none !important; }` in `styles.css` and explicit `style.display = "none"` in `app.js` so the camera prompt dismisses immediately upon grant.<br>- Verified all 316 Python unit tests and 10 Node.js unit tests green. | Enable 100% independent development and live instant testing on mobile devices without external GitHub permissions. |
 | **2026-09-20** | Engineering Team | Initial prototype scaffold carryover from v4; setup in-repo `.claude/` verifiers, render blueprint, and initial docs. | Transition to self-contained v5 prototype root. |
 

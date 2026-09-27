@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#0f172a" />
   <title>Kinetiq — Live Session</title>
   <link rel="manifest" href="manifest.json" />
-  <link rel="stylesheet" href="styles.css" />
+  <link rel="stylesheet" href="styles.css?v=5.0.3" />
 </head>
 <body>
   <!-- ============ SCREEN 1: exercise picker ============ -->
@@ -64,6 +64,7 @@
       <!-- overlay states -->
       <div id="state-overlay" class="state-overlay" hidden>
         <div class="state-card">
+          <button id="state-dismiss" class="ghost-btn state-dismiss" hidden aria-label="Dismiss">&times;</button>
           <div id="state-title" class="state-title">Loading…</div>
           <div id="state-msg" class="state-msg"></div>
           <button id="state-action" class="primary-btn" hidden></button>
@@ -97,6 +98,6 @@
 
   <script src="config.js"></script>
   <!-- MediaPipe Tasks Vision (PoseLandmarker / BlazePose) as an ES module from the CDN. -->
-  <script type="module" src="app.js"></script>
+  <script type="module" src="app.js?v=5.0.3"></script>
 </body>
 </html>
