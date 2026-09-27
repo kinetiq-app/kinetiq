@@ -175,15 +175,18 @@ function scheduleCameraRelease() {
 }
 
 function syncOverlayDimensions() {
-  if (video.videoWidth > 0 && video.videoHeight > 0) {
-    overlay.width = video.videoWidth;
-    overlay.height = video.videoHeight;
-  } else {
-    video.onloadedmetadata = () => {
-      overlay.width = video.videoWidth || 640;
-      overlay.height = video.videoHeight || 480;
-    };
+  // When a stream is reused (srcObject re-assigned), loadedmetadata does NOT
+  // re-fire, so the old event-listener approach silently leaves the canvas at
+  // its previous dimensions (or 0×0 on first load). Poll via rAF until ready.
+  function applyDimensions() {
+    if (video.videoWidth > 0 && video.videoHeight > 0) {
+      overlay.width  = video.videoWidth;
+      overlay.height = video.videoHeight;
+    } else {
+      requestAnimationFrame(applyDimensions);
+    }
   }
+  applyDimensions();
 }
 
 async function startCamera() {
@@ -279,12 +282,23 @@ function loop() {
     }
   }
   const now = performance.now();
-  if (video.currentTime !== lastVideoTs) {
+  // Only detect when the video element has actual frame data (readyState HAVE_CURRENT_DATA or better)
+  // and when a new frame has arrived (currentTime changed). Without the readyState guard,
+  // detectForVideo() on a mid-start stream returns garbage landmarks → false reps.
+  if (video.readyState >= 2 && video.currentTime !== lastVideoTs) {
     lastVideoTs = video.currentTime;
     const result = landmarker.detectForVideo(video, now);
     if (result.landmarks && result.landmarks.length > 0) {
-      frameBuffer.push(buildFrame(result.landmarks[0], now));
-      drawSkeleton(result.landmarks[0]);
+      const lm = result.landmarks[0];
+      // Compute median visibility across the 33 landmarks. If the body is not
+      // in frame (e.g. camera warming up, person walked away), visibility will
+      // be low and the frame should NOT be scored — it produces phantom reps.
+      const visValues = lm.map((p) => p.visibility ?? 0).sort((a, b) => a - b);
+      const medianVis = visValues[Math.floor(visValues.length / 2)];
+      if (medianVis >= 0.35) {
+        frameBuffer.push(buildFrame(lm, now));
+      }
+      drawSkeleton(lm);
     } else {
       octx.clearRect(0, 0, overlay.width, overlay.height);
     }
@@ -517,26 +531,48 @@ function prettyFlag(f) {
 }
 
 // ---------------------------------------------------------------------------
-// skeleton overlay (cosmetic — helps a user frame themselves)
+// BlazePose 33-landmark connections — torso, arms, legs, and feet.
+// Skipping face mesh interior; just the outer silhouette (0=nose, 7/8=ears, 9/10=mouth).
 const CONNECTIONS = [
-  [11, 12], [11, 13], [13, 15], [12, 14], [14, 16],
-  [11, 23], [12, 24], [23, 24],
-  [23, 25], [25, 27], [24, 26], [26, 28],
+  // Shoulders & torso
+  [11, 12], [11, 23], [12, 24], [23, 24],
+  // Left arm: shoulder → elbow → wrist → pinky/index/thumb
+  [11, 13], [13, 15], [15, 17], [15, 19], [15, 21], [17, 19],
+  // Right arm
+  [12, 14], [14, 16], [16, 18], [16, 20], [16, 22], [18, 20],
+  // Left leg: hip → knee → ankle → heel/foot
+  [23, 25], [25, 27], [27, 29], [27, 31], [29, 31],
+  // Right leg
+  [24, 26], [26, 28], [28, 30], [28, 32], [30, 32],
 ];
+
+// Minimum visibility to render a landmark or connection endpoint.
+const VIS_THRESHOLD = 0.5;
+
 function drawSkeleton(lm) {
   octx.clearRect(0, 0, overlay.width, overlay.height);
-  octx.lineWidth = 3;
-  octx.strokeStyle = "rgba(16,185,129,0.9)";
-  octx.fillStyle = "rgba(16,185,129,0.9)";
+  // Draw connections first (underneath dots)
   for (const [a, b] of CONNECTIONS) {
-    if (!lm[a] || !lm[b]) continue;
+    const pa = lm[a], pb = lm[b];
+    if (!pa || !pb) continue;
+    const visA = pa.visibility ?? 0;
+    const visB = pb.visibility ?? 0;
+    // Skip if either endpoint is uncertain
+    if (visA < VIS_THRESHOLD || visB < VIS_THRESHOLD) continue;
+    const alpha = Math.min(visA, visB).toFixed(2);
     octx.beginPath();
-    octx.moveTo(lm[a].x * overlay.width, lm[a].y * overlay.height);
-    octx.lineTo(lm[b].x * overlay.width, lm[b].y * overlay.height);
+    octx.lineWidth = 3;
+    octx.strokeStyle = `rgba(16,185,129,${alpha})`;
+    octx.moveTo(pa.x * overlay.width, pa.y * overlay.height);
+    octx.lineTo(pb.x * overlay.width, pb.y * overlay.height);
     octx.stroke();
   }
+  // Draw joint dots with visibility-scaled alpha
   for (const p of lm) {
+    const vis = p.visibility ?? 0;
+    if (vis < VIS_THRESHOLD) continue;
     octx.beginPath();
+    octx.fillStyle = `rgba(16,185,129,${vis.toFixed(2)})`;
     octx.arc(p.x * overlay.width, p.y * overlay.height, 4, 0, Math.PI * 2);
     octx.fill();
   }
