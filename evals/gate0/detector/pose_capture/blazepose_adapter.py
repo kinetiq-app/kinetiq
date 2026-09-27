@@ -34,10 +34,12 @@ class BlazePoseAdapter(PoseCaptureAdapter):
 
     def is_available(self) -> bool:
         try:
+            import cv2  # noqa: F401
             import mediapipe  # noqa: F401
         except ImportError:
             return False
-        return True
+        model_path = os.environ.get("KINETIQ_POSE_LANDMARKER_PATH", "pose_landmarker.task")
+        return Path(model_path).is_file()
 
     def install_hint(self) -> str:
         return (

@@ -17,7 +17,15 @@ import {
 import { createSetTracker, boundQueue } from "./segments.js";
 
 const CFG = window.KINETIQ_CONFIG;
-const API = CFG.API_BASE_URL.replace(/\/+$/, "");
+const urlParams = typeof window !== "undefined" && window.location ? new URLSearchParams(window.location.search) : null;
+const queryApi = urlParams ? urlParams.get("api") : null;
+const isLocalHost = typeof window !== "undefined" && window.location && (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1");
+let resolvedApi = queryApi || (CFG && CFG.API_BASE_URL) || "";
+if (!queryApi && isLocalHost && resolvedApi.startsWith("https://")) {
+  // Remote deployed API rejects CORS requests from localhost; automatically use local API
+  resolvedApi = "http://127.0.0.1:8000";
+}
+const API = resolvedApi.replace(/\/+$/, "");
 
 // ---- DOM ----
 const $ = (id) => document.getElementById(id);
@@ -78,14 +86,20 @@ function setState(title, msg, actionLabel, actionFn) {
   if (actionLabel) {
     btn.textContent = actionLabel;
     btn.hidden = false;
+    btn.style.display = "";
     btn.onclick = actionFn;
   } else {
     btn.hidden = true;
+    btn.style.display = "none";
   }
-  $("state-overlay").hidden = false;
+  const el = $("state-overlay");
+  el.hidden = false;
+  el.style.display = "flex";
 }
 function clearState() {
-  $("state-overlay").hidden = true;
+  const el = $("state-overlay");
+  el.hidden = true;
+  el.style.display = "none";
 }
 
 // ---------------------------------------------------------------------------
@@ -471,18 +485,15 @@ async function startSet(ex) {
     await loadModel();
     setState("Camera", "Allow camera access to begin. Video stays on your device.");
     await startCamera();
+    clearState();
 
-    // Wake the detector before the first rep rather than discovering it is
-    // asleep mid-set. We do NOT block the set on this: if it times out we start
-    // anyway, buffer frames, and let flush() keep retrying -- losing the first
-    // few reps of a set is worse than showing a notice.
+    // Wake the detector in the background if not already awake.
+    // Use the non-blocking banner strip so the camera view and skeleton remain fully visible!
     if (!apiWarm) {
-      setState("Waking the coach", "The free server sleeps when idle. First start can take a minute.");
-      const awake = await wakeApi((m) => setState("Waking the coach", m));
-      clearState();
-      if (!awake) banner("Server still waking — your reps are being recorded and will catch up.");
-    } else {
-      clearState();
+      banner("Waking the server — your reps are being recorded and will catch up.");
+      wakeApi((m) => banner(m)).then((awake) => {
+        if (awake) banner(null);
+      }).catch(() => {});
     }
   } catch (err) {
     if (err && (err.name === "NotAllowedError" || err.name === "SecurityError")) {

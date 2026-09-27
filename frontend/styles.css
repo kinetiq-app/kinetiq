@@ -5,6 +5,7 @@
   --text:#ffffff; --muted:#94a3b8; --radius:16px;
 }
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+[hidden]{display:none !important}
 html,body{margin:0;height:100%;background:var(--bg);color:var(--text);
   font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
 body{overflow:hidden}
@@ -68,6 +69,7 @@ body{overflow:hidden}
 
 .state-overlay{position:absolute;inset:0;z-index:5;display:flex;align-items:center;justify-content:center;
   background:rgba(15,23,42,.92);padding:24px}
+.state-overlay[hidden]{display:none !important}
 .state-card{text-align:center;max-width:320px}
 .state-title{font-size:20px;font-weight:700;margin-bottom:8px}
 .state-msg{color:var(--muted);font-size:15px;line-height:1.5;margin-bottom:18px}
