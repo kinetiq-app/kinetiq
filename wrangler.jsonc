@@ -1,6 +1,6 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "kinetiq",
+  "name": "dev",
   "main": "worker.js",
   "compatibility_date": "2024-09-23",
   "observability": {
@@ -9,17 +9,5 @@
   "assets": {
     "directory": "frontend",
     "binding": "ASSETS"
-  },
-  "env": {
-    "dev": {
-      "name": "kinetiq-dev",
-      "observability": {
-        "enabled": true
-      },
-      "assets": {
-        "directory": "frontend",
-        "binding": "ASSETS"
-      }
-    }
   }
 }
