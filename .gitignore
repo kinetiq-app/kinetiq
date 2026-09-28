@@ -34,3 +34,6 @@ dist/
 out/
 .probe
 cloudflared.exe
+
+# Wrangler local dev secrets
+.dev.vars

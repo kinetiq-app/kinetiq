@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#0f172a" />
   <title>Kinetiq — Live Session</title>
   <link rel="manifest" href="manifest.json" />
-  <link rel="stylesheet" href="styles.css?v=5.0.4" />
+  <link rel="stylesheet" href="styles.css?v=5.0.6" />
 </head>
 <body>
   <!-- ============ SCREEN 1: exercise picker ============ -->
@@ -46,10 +46,17 @@
         <span id="hud-lock" class="lock-pill lock-unknown">locating you…</span>
       </div>
 
-      <!-- rep counter -->
-      <div class="hud-rep">
-        <div id="rep-count" class="rep-count">0</div>
-        <div id="phase" class="phase">—</div>
+      <!-- positioning guidance pill -->
+      <div id="hud-guide" class="hud-guide" hidden>
+        <span id="guide-icon" class="guide-icon">📱</span>
+        <span id="guide-text" class="guide-text">Set phone down &amp; step back</span>
+      </div>
+
+      <!-- countdown overlay -->
+      <div id="hud-countdown" class="hud-countdown" hidden>
+        <div id="countdown-num" class="countdown-num">3</div>
+        <div id="countdown-msg" class="countdown-msg">Get Ready</div>
+        <button id="btn-skip-countdown" class="skip-countdown-btn" type="button">Start now</button>
       </div>
 
       <!-- coaching cue + flags -->
@@ -72,8 +79,16 @@
       </div>
     </div>
 
-    <div class="controls">
-      <button id="btn-stop" class="primary-btn danger">End set</button>
+    <!-- divided bottom controls: reps count on left, end set button on right -->
+    <div class="controls live-controls">
+      <div class="rep-card">
+        <div class="rep-card-main">
+          <span id="rep-count" class="rep-val">0</span>
+          <span class="rep-lbl">REPS</span>
+        </div>
+        <div id="phase" class="rep-phase">—</div>
+      </div>
+      <button id="btn-stop" class="primary-btn danger btn-end-set">End set</button>
     </div>
   </section>
 
@@ -98,6 +113,6 @@
 
   <script src="config.js"></script>
   <!-- MediaPipe Tasks Vision (PoseLandmarker / BlazePose) as an ES module from the CDN. -->
-  <script type="module" src="app.js?v=5.0.4"></script>
+  <script type="module" src="app.js?v=5.0.6"></script>
 </body>
 </html>

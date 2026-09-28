@@ -44,12 +44,156 @@ body{overflow:hidden}
 .lock-unknown{background:rgba(148,163,184,.2);color:var(--muted)}
 .lock-lost{background:rgba(239,68,68,.2);color:var(--danger)}
 
-.hud-rep{position:absolute;top:50%;left:0;right:0;transform:translateY(-50%);
-  text-align:center;z-index:2;pointer-events:none}
-.rep-count{font-size:120px;font-weight:800;line-height:1;
-  text-shadow:0 2px 24px rgba(0,0,0,.6)}
-.phase{font-size:15px;color:var(--muted);text-transform:uppercase;letter-spacing:2px;margin-top:4px;
-  text-shadow:0 1px 8px rgba(0,0,0,.8)}
+/* Guidance pill for positioning */
+.hud-guide {
+  position: absolute;
+  top: 66px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: rgba(15, 23, 42, 0.9);
+  border: 1px solid #334155;
+  color: var(--text);
+  border-radius: 999px;
+  padding: 8px 18px;
+  font-size: 14px;
+  font-weight: 600;
+  backdrop-filter: blur(8px);
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+  transition: all 0.25s ease;
+  white-space: nowrap;
+  max-width: 90%;
+  pointer-events: none;
+}
+.hud-guide.ready {
+  border-color: var(--good);
+  color: var(--good);
+  background: rgba(4, 35, 26, 0.92);
+}
+.guide-icon { font-size: 16px; }
+
+/* Big countdown overlay */
+.hud-countdown {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 4;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+}
+.countdown-num {
+  font-size: 130px;
+  font-weight: 900;
+  line-height: 1;
+  color: #fff;
+  text-shadow: 0 4px 30px rgba(0, 0, 0, 0.8), 0 0 35px rgba(16, 185, 129, 0.5);
+  animation: popIn 0.35s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+}
+.countdown-msg {
+  font-size: 18px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 2px;
+  color: var(--good);
+  margin-top: 10px;
+  text-shadow: 0 2px 12px rgba(0, 0, 0, 0.8);
+}
+.skip-countdown-btn {
+  margin-top: 20px;
+  background: rgba(30, 41, 59, 0.85);
+  border: 1px solid #475569;
+  color: #cbd5e1;
+  padding: 8px 18px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+.skip-countdown-btn:active, .skip-countdown-btn:hover {
+  background: rgba(51, 65, 85, 0.95);
+  color: #fff;
+}
+@keyframes popIn {
+  0% { transform: scale(0.6); opacity: 0; }
+  100% { transform: scale(1); opacity: 1; }
+}
+
+/* Live screen dual-split bottom controls */
+.live-controls {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  align-items: stretch;
+}
+
+.rep-card {
+  background: var(--card);
+  border: 1px solid #334155;
+  border-radius: 14px;
+  padding: 8px 12px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  gap: 2px;
+  user-select: none;
+  min-height: 58px;
+}
+
+.rep-card-main {
+  display: flex;
+  align-items: baseline;
+  justify-content: center;
+  gap: 5px;
+}
+
+.rep-val {
+  font-size: 32px;
+  font-weight: 800;
+  line-height: 1;
+  color: #fff;
+  font-variant-numeric: tabular-nums;
+}
+
+.rep-lbl {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 1.5px;
+  color: var(--muted);
+  text-transform: uppercase;
+}
+
+.rep-phase {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 1px;
+  color: var(--good);
+  text-transform: uppercase;
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.btn-end-set {
+  height: 100%;
+  min-height: 58px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 14px;
+  font-size: 17px;
+  font-weight: 700;
+  padding: 0 16px;
+}
 
 .hud-bottom{position:absolute;bottom:0;left:0;right:0;padding:16px;z-index:3;
   background:linear-gradient(to top,rgba(15,23,42,.9),transparent)}

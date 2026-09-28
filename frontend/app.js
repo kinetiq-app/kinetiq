@@ -60,6 +60,14 @@ let lastResponse = null;
 let lastVideoTs = -1;
 let postTimer = null;
 
+// ---- positioning & framing state ----
+let sessionPhase = "positioning"; // "positioning" | "countdown" | "active"
+let steadyFrameCount = 0;
+let countdownTimer = null;
+let countdownVal = 3;
+let smoothedLandmarks = null;
+let audioCtx = null;
+
 // ---- connection resilience -------------------------------------------------
 // Render's free tier puts a web service to sleep after ~15 min idle, and the
 // next request pays a 30-60s cold start. That lands on the FIRST request of a
@@ -271,6 +279,216 @@ function bboxOf(kp) {
 }
 
 // ---------------------------------------------------------------------------
+// audio tone helper (Web Audio API - synthetic, zero external assets)
+function playBeep(freq = 440, duration = 0.12) {
+  try {
+    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContextClass) return;
+    if (!audioCtx) audioCtx = new AudioContextClass();
+    if (audioCtx.state === "suspended") audioCtx.resume();
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    osc.type = "sine";
+    osc.frequency.setValueAtTime(freq, audioCtx.currentTime);
+    gain.gain.setValueAtTime(0.18, audioCtx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + duration);
+    osc.connect(gain);
+    gain.connect(audioCtx.destination);
+    osc.start();
+    osc.stop(audioCtx.currentTime + duration);
+  } catch {}
+}
+
+// ---------------------------------------------------------------------------
+// framing & positioning evaluator
+// Checks if the user has set the phone down and stepped into full view.
+function evaluateFraming(lm, ex) {
+  if (!lm || lm.length < 33) {
+    return { ok: false, reason: "Step into camera view", isHoldingPhone: false };
+  }
+
+  const ls = lm[11], rs = lm[12]; // shoulders
+  const lh = lm[23], rh = lm[24]; // hips
+  const lk = lm[25], rk = lm[26]; // knees
+
+  const sVisMin = Math.min(ls.visibility ?? 0, rs.visibility ?? 0);
+  const hVisMin = Math.min(lh.visibility ?? 0, rh.visibility ?? 0);
+  const kVisMax = Math.max(lk.visibility ?? 0, rk.visibility ?? 0);
+
+  // 1. Proximity / Holding phone check:
+  // If shoulders span > 42% of frame width, or user bbox is huge (> 85% height),
+  // or shoulders are right at the top edge (< 0.04), user is holding the phone or way too close.
+  const shoulderWidth = Math.abs(ls.x - rs.x);
+  const shoulderDist = Math.hypot(ls.x - rs.x, ls.y - rs.y);
+  const kp = lm.map((p) => [p.x, p.y, p.z ?? 0, p.visibility ?? 0]);
+  const box = bboxOf(kp);
+  const isTooClose = shoulderWidth > 0.42 || shoulderDist > 0.45 || box[3] > 0.88 || (sVisMin > 0.5 && ls.y < 0.04);
+
+  if (isTooClose) {
+    return { ok: false, reason: "Set phone down & step back", isHoldingPhone: true };
+  }
+
+  // 2. Both shoulders must be visible
+  if (sVisMin < 0.55) {
+    return { ok: false, reason: "Step back — shoulders not in frame", isHoldingPhone: false };
+  }
+
+  // 3. Both hips must be visible
+  if (hVisMin < 0.45) {
+    return { ok: false, reason: "Step back — hips not in frame", isHoldingPhone: false };
+  }
+
+  // 4. Exercise-specific requirements:
+  // Standing movements (squat, lunge) need knees in frame
+  if (ex === "squat" || ex === "lunge") {
+    if (kVisMax < 0.40) {
+      return { ok: false, reason: "Step back — knees must be in frame", isHoldingPhone: false };
+    }
+  }
+
+  return { ok: true, reason: "In position! Hold still...", isHoldingPhone: false };
+}
+
+// ---------------------------------------------------------------------------
+// temporal exponential moving average (EMA) filter
+// Eliminates jitter/glitching from landmarks while staying responsive to movement
+function smoothLandmarks(rawLm) {
+  if (!rawLm || rawLm.length < 33) {
+    smoothedLandmarks = null;
+    return null;
+  }
+  if (!smoothedLandmarks) {
+    smoothedLandmarks = rawLm.map((p) => ({
+      x: p.x,
+      y: p.y,
+      z: p.z ?? 0,
+      visibility: p.visibility ?? 0,
+    }));
+    return smoothedLandmarks;
+  }
+
+  const ALPHA = 0.65;
+  for (let i = 0; i < 33; i++) {
+    const raw = rawLm[i];
+    const prev = smoothedLandmarks[i];
+    const rawVis = raw.visibility ?? 0;
+
+    prev.visibility = 0.7 * prev.visibility + 0.3 * rawVis;
+
+    const dx = raw.x - prev.x;
+    const dy = raw.y - prev.y;
+    const distSq = dx * dx + dy * dy;
+
+    // If landmark jumped too far (sudden flip or recovery), snap to raw
+    if (distSq > 0.06) {
+      prev.x = raw.x;
+      prev.y = raw.y;
+    } else {
+      prev.x = ALPHA * raw.x + (1 - ALPHA) * prev.x;
+      prev.y = ALPHA * raw.y + (1 - ALPHA) * prev.y;
+    }
+  }
+  return smoothedLandmarks;
+}
+
+// ---------------------------------------------------------------------------
+// guidance pill & countdown management
+function showGuidePill(text, isReady = false, icon = null) {
+  const el = $("hud-guide");
+  if (!el) return;
+  const iconEl = $("guide-icon");
+  const textEl = $("guide-text");
+  if (iconEl) iconEl.textContent = icon || (isReady ? "✓" : "📱");
+  if (textEl) textEl.textContent = text;
+  el.className = "hud-guide" + (isReady ? " ready" : "");
+  el.hidden = false;
+}
+
+function hideGuidePill() {
+  const el = $("hud-guide");
+  if (el) el.hidden = true;
+}
+
+function startCountdown() {
+  if (sessionPhase === "countdown" || sessionPhase === "active") return;
+  sessionPhase = "countdown";
+  countdownVal = 3;
+
+  const countdownEl = $("hud-countdown");
+  const numEl = $("countdown-num");
+  const msgEl = $("countdown-msg");
+
+  showGuidePill("In position! Hold still...", true, "✓");
+
+  countdownEl.hidden = false;
+  numEl.textContent = "3";
+  numEl.style.color = "#ffffff";
+  msgEl.textContent = "Get Ready";
+  numEl.style.animation = "none";
+  numEl.offsetHeight; // trigger reflow
+  numEl.style.animation = "popIn 0.35s cubic-bezier(0.175, 0.885, 0.32, 1.275)";
+
+  playBeep(440, 0.12);
+
+  clearInterval(countdownTimer);
+  countdownTimer = setInterval(() => {
+    countdownVal--;
+    if (countdownVal > 0) {
+      numEl.textContent = String(countdownVal);
+      numEl.style.animation = "none";
+      numEl.offsetHeight;
+      numEl.style.animation = "popIn 0.35s cubic-bezier(0.175, 0.885, 0.32, 1.275)";
+      playBeep(440, 0.12);
+    } else if (countdownVal === 0) {
+      numEl.textContent = "GO!";
+      numEl.style.color = "var(--good)";
+      numEl.style.animation = "none";
+      numEl.offsetHeight;
+      numEl.style.animation = "popIn 0.35s cubic-bezier(0.175, 0.885, 0.32, 1.275)";
+      msgEl.textContent = "Start " + (exercise || "exercise");
+      playBeep(880, 0.25);
+    } else {
+      clearInterval(countdownTimer);
+      countdownTimer = null;
+      beginActiveWorkout();
+    }
+  }, 1000);
+}
+
+function cancelCountdown(reason) {
+  if (sessionPhase !== "countdown") return;
+  clearInterval(countdownTimer);
+  countdownTimer = null;
+  sessionPhase = "positioning";
+  steadyFrameCount = 0;
+  const countdownEl = $("hud-countdown");
+  if (countdownEl) countdownEl.hidden = true;
+  showGuidePill(reason || "Set phone down & step back", false);
+}
+
+function beginActiveWorkout() {
+  sessionPhase = "active";
+  const countdownEl = $("hud-countdown");
+  if (countdownEl) countdownEl.hidden = true;
+  hideGuidePill();
+
+  // Reset session cleanly for the active workout
+  sessionId = newSessionId();
+  firstPost = true;
+  frameBuffer = [];
+  lastVideoTs = -1;
+  tracker = createSetTracker(() => sessionMaxFrames, {
+    rollAt: CFG.SESSION_ROLL_AT,
+    forceRollAt: CFG.SESSION_FORCE_ROLL_AT,
+  });
+
+  $("rep-count").textContent = "0";
+  $("phase").textContent = "—";
+  $("hud-lock").className = "lock-pill lock-ok";
+  $("hud-lock").textContent = "locked on you";
+}
+
+// ---------------------------------------------------------------------------
 // detection loop
 function loop() {
   if (!running) return;
@@ -282,25 +500,78 @@ function loop() {
     }
   }
   const now = performance.now();
-  // Only detect when the video element has actual frame data (readyState HAVE_CURRENT_DATA or better)
-  // and when a new frame has arrived (currentTime changed). Without the readyState guard,
-  // detectForVideo() on a mid-start stream returns garbage landmarks → false reps.
   if (video.readyState >= 2 && video.currentTime !== lastVideoTs) {
     lastVideoTs = video.currentTime;
     const result = landmarker.detectForVideo(video, now);
     if (result.landmarks && result.landmarks.length > 0) {
-      const lm = result.landmarks[0];
-      // Compute median visibility across the 33 landmarks. If the body is not
-      // in frame (e.g. camera warming up, person walked away), visibility will
-      // be low and the frame should NOT be scored — it produces phantom reps.
-      const visValues = lm.map((p) => p.visibility ?? 0).sort((a, b) => a - b);
-      const medianVis = visValues[Math.floor(visValues.length / 2)];
-      if (medianVis >= 0.35) {
-        frameBuffer.push(buildFrame(lm, now));
+      const rawLm = result.landmarks[0];
+      const framing = evaluateFraming(rawLm, exercise);
+      const inFrame = framing.ok;
+
+      // Draw wireframe only if shoulders are visible and user is not holding phone close
+      const sVisMin = Math.min(rawLm[11].visibility ?? 0, rawLm[12].visibility ?? 0);
+      const canDraw = sVisMin >= 0.50 && !framing.isHoldingPhone;
+
+      if (canDraw) {
+        const smoothed = smoothLandmarks(rawLm);
+        drawSkeleton(smoothed);
+      } else {
+        smoothedLandmarks = null;
+        octx.clearRect(0, 0, overlay.width, overlay.height);
       }
-      drawSkeleton(lm);
+
+      // STATE MACHINE:
+      if (sessionPhase === "positioning") {
+        $("hud-lock").className = "lock-pill lock-unknown";
+        $("hud-lock").textContent = framing.isHoldingPhone ? "set phone down" : (inFrame ? "in position" : "step back");
+        showGuidePill(framing.reason, inFrame);
+
+        if (inFrame) {
+          steadyFrameCount++;
+          // Stably positioned for ~18 frames (~0.5-0.6s)
+          if (steadyFrameCount >= 18) {
+            startCountdown();
+          }
+        } else {
+          steadyFrameCount = 0;
+        }
+      } else if (sessionPhase === "countdown") {
+        if (!inFrame && !framing.isHoldingPhone) {
+          steadyFrameCount = 0;
+          cancelCountdown("Stepped out of frame — step back to restart");
+        }
+      } else if (sessionPhase === "active") {
+        if (inFrame) {
+          // Send frame to detector
+          frameBuffer.push(buildFrame(smoothedLandmarks || rawLm, now));
+          $("hud-lock").className = "lock-pill lock-ok";
+          $("hud-lock").textContent = "locked on you";
+          hideGuidePill();
+        } else {
+          // User walked away, phone tilted, or user walking up to phone to end set.
+          // CRITICAL: Do NOT push frames to buffer! Prevents end-of-set false reps.
+          $("hud-lock").className = "lock-pill lock-lost";
+          $("hud-lock").textContent = framing.isHoldingPhone ? "too close" : "can't see you";
+          showGuidePill(framing.reason, false);
+        }
+      }
     } else {
+      // Nobody detected in frame
+      smoothedLandmarks = null;
       octx.clearRect(0, 0, overlay.width, overlay.height);
+
+      if (sessionPhase === "positioning") {
+        steadyFrameCount = 0;
+        showGuidePill("Step into camera view", false);
+        $("hud-lock").className = "lock-pill lock-lost";
+        $("hud-lock").textContent = "can't see you";
+      } else if (sessionPhase === "countdown") {
+        cancelCountdown("Can't see you — step back into frame");
+      } else if (sessionPhase === "active") {
+        $("hud-lock").className = "lock-pill lock-lost";
+        $("hud-lock").textContent = "can't see you";
+        showGuidePill("Step back into frame", false);
+      }
     }
   }
   requestAnimationFrame(loop);
@@ -531,49 +802,91 @@ function prettyFlag(f) {
 }
 
 // ---------------------------------------------------------------------------
-// BlazePose 33-landmark connections — torso, arms, legs, and feet.
-// Skipping face mesh interior; just the outer silhouette (0=nose, 7/8=ears, 9/10=mouth).
-const CONNECTIONS = [
-  // Shoulders & torso
-  [11, 12], [11, 23], [12, 24], [23, 24],
-  // Left arm: shoulder → elbow → wrist → pinky/index/thumb
-  [11, 13], [13, 15], [15, 17], [15, 19], [15, 21], [17, 19],
+// Clean 14-bone biomechanical graph for fitness tracking (eliminates finger/face clutter)
+const SKELETON_BONES = [
+  // Shoulders & Torso
+  [11, 12], // shoulder-to-shoulder
+  [11, 23], // left shoulder to left hip
+  [12, 24], // right shoulder to right hip
+  [23, 24], // hip-to-hip
+
+  // Left arm
+  [11, 13], // left shoulder to left elbow
+  [13, 15], // left elbow to left wrist
+
   // Right arm
-  [12, 14], [14, 16], [16, 18], [16, 20], [16, 22], [18, 20],
-  // Left leg: hip → knee → ankle → heel/foot
-  [23, 25], [25, 27], [27, 29], [27, 31], [29, 31],
+  [12, 14], // right shoulder to right elbow
+  [14, 16], // right elbow to right wrist
+
+  // Left leg
+  [23, 25], // left hip to left knee
+  [25, 27], // left knee to left ankle
+  [27, 31], // left ankle to left foot
+
   // Right leg
-  [24, 26], [26, 28], [28, 30], [28, 32], [30, 32],
+  [24, 26], // right hip to right knee
+  [26, 28], // right knee to right ankle
+  [28, 32], // right ankle to right foot
 ];
 
-// Minimum visibility to render a landmark or connection endpoint.
-const VIS_THRESHOLD = 0.5;
+const KEY_JOINTS = [
+  0,                  // Nose (head anchor)
+  11, 12,             // Shoulders
+  13, 14,             // Elbows
+  15, 16,             // Wrists
+  23, 24,             // Hips
+  25, 26,             // Knees
+  27, 28,             // Ankles
+];
 
 function drawSkeleton(lm) {
   octx.clearRect(0, 0, overlay.width, overlay.height);
-  // Draw connections first (underneath dots)
-  for (const [a, b] of CONNECTIONS) {
+  if (!lm || lm.length < 33) return;
+
+  // Anchor check: both shoulders must be visible with at least 0.50 visibility.
+  // If the core upper body isn't in frame, don't draw an isolated limb glitching around!
+  const sVisMin = Math.min(lm[11].visibility ?? 0, lm[12].visibility ?? 0);
+  if (sVisMin < 0.50) return;
+
+  octx.lineCap = "round";
+
+  // 1. Draw bones
+  for (const [a, b] of SKELETON_BONES) {
     const pa = lm[a], pb = lm[b];
     if (!pa || !pb) continue;
     const visA = pa.visibility ?? 0;
     const visB = pb.visibility ?? 0;
-    // Skip if either endpoint is uncertain
-    if (visA < VIS_THRESHOLD || visB < VIS_THRESHOLD) continue;
-    const alpha = Math.min(visA, visB).toFixed(2);
+    if (visA < 0.50 || visB < 0.50) continue;
+
+    const alpha = Math.min(visA, visB);
     octx.beginPath();
-    octx.lineWidth = 3;
-    octx.strokeStyle = `rgba(16,185,129,${alpha})`;
+    octx.lineWidth = 3.5;
+    octx.strokeStyle = `rgba(16, 185, 129, ${alpha.toFixed(2)})`;
     octx.moveTo(pa.x * overlay.width, pa.y * overlay.height);
     octx.lineTo(pb.x * overlay.width, pb.y * overlay.height);
     octx.stroke();
   }
-  // Draw joint dots with visibility-scaled alpha
-  for (const p of lm) {
+
+  // 2. Draw key biomechanical joints
+  for (const idx of KEY_JOINTS) {
+    const p = lm[idx];
+    if (!p) continue;
     const vis = p.visibility ?? 0;
-    if (vis < VIS_THRESHOLD) continue;
+    if (vis < 0.50) continue;
+
+    const x = p.x * overlay.width;
+    const y = p.y * overlay.height;
+
+    // Emerald halo
     octx.beginPath();
-    octx.fillStyle = `rgba(16,185,129,${vis.toFixed(2)})`;
-    octx.arc(p.x * overlay.width, p.y * overlay.height, 4, 0, Math.PI * 2);
+    octx.fillStyle = `rgba(16, 185, 129, ${vis.toFixed(2)})`;
+    octx.arc(x, y, 5, 0, Math.PI * 2);
+    octx.fill();
+
+    // Crisp white inner core
+    octx.beginPath();
+    octx.fillStyle = `rgba(255, 255, 255, ${(vis * 0.9).toFixed(2)})`;
+    octx.arc(x, y, 2, 0, Math.PI * 2);
     octx.fill();
   }
 }
@@ -606,12 +919,30 @@ async function startSet(ex) {
     banner(null);
     clearState();
 
+    sessionPhase = "positioning";
+    steadyFrameCount = 0;
+    smoothedLandmarks = null;
+    clearInterval(countdownTimer);
+    countdownTimer = null;
+    hideGuidePill();
+    if ($("hud-countdown")) $("hud-countdown").hidden = true;
+
+    // Initialize Web Audio on user gesture
+    try {
+      const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+      if (AudioContextClass && !audioCtx) audioCtx = new AudioContextClass();
+      if (audioCtx && audioCtx.state === "suspended") audioCtx.resume();
+    } catch {}
+
     $("hud-exercise").textContent = ex;
     $("rep-count").textContent = "0";
     $("phase").textContent = "—";
+    $("hud-lock").className = "lock-pill lock-unknown";
+    $("hud-lock").textContent = "step back";
     $("cue").hidden = true;
     $("flags").innerHTML = "";
     show("live");
+    showGuidePill("Set phone down & step back", false);
 
     // 1. Pose model: only show warmup overlay if landmarker is not yet in memory
     if (!landmarker) {
@@ -665,6 +996,13 @@ async function startSet(ex) {
 
 async function stopSet() {
   running = false;
+  clearInterval(countdownTimer);
+  countdownTimer = null;
+  sessionPhase = "positioning";
+  smoothedLandmarks = null;
+  hideGuidePill();
+  if ($("hud-countdown")) $("hud-countdown").hidden = true;
+
   if (postTimer) {
     clearInterval(postTimer);
     postTimer = null;
@@ -682,6 +1020,13 @@ async function stopSet() {
 
 function backToPicker() {
   running = false;
+  clearInterval(countdownTimer);
+  countdownTimer = null;
+  sessionPhase = "positioning";
+  smoothedLandmarks = null;
+  hideGuidePill();
+  if ($("hud-countdown")) $("hud-countdown").hidden = true;
+
   if (postTimer) {
     clearInterval(postTimer);
     postTimer = null;
@@ -742,6 +1087,15 @@ $("btn-again").addEventListener("click", () => {
   banner(null);
   show("picker");
 });
+const skipBtn = $("btn-skip-countdown");
+if (skipBtn) {
+  skipBtn.addEventListener("click", () => {
+    clearInterval(countdownTimer);
+    countdownTimer = null;
+    playBeep(880, 0.2);
+    beginActiveWorkout();
+  });
+}
 
 window.addEventListener("pagehide", () => stopCamera(true));
 

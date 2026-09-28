@@ -1,6 +1,10 @@
 // Cloudflare Worker entry point for kinetiq PWA with static assets
 // Proxies backend detector API endpoints (/health and /prototype/*) to Render,
 // and serves static assets for all client PWA routes.
+//
+// API_BACKEND env var overrides the backend origin:
+//   Production (unset) → https://kinetiq-v5-api.onrender.com
+//   Local dev (.dev.vars) → http://localhost:8000
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
@@ -18,13 +22,16 @@ export default {
       });
     }
 
-    // Proxy API routes (/health and /prototype/*) to the Render detector backend
+    // Proxy API routes (/health and /prototype/*) to the detector backend.
+    // API_BACKEND lets local dev point at localhost:8000 without code changes.
     if (url.pathname === "/health" || url.pathname.startsWith("/prototype/")) {
-      const targetUrl = new URL(url.pathname + url.search, "https://kinetiq-v5-api.onrender.com");
+      const backendOrigin = (env.API_BACKEND || "https://kinetiq-v5-api.onrender.com").replace(/\/+$/, "");
+      const targetUrl = new URL(url.pathname + url.search, backendOrigin);
+      const targetHost = new URL(backendOrigin).host;
 
       const headers = new Headers(request.headers);
-      headers.set("Host", "kinetiq-v5-api.onrender.com");
-      headers.set("Origin", "https://kinetiq-v5-pwa.onrender.com");
+      headers.set("Host", targetHost);
+      headers.set("Origin", backendOrigin);
 
       const backendRequest = new Request(targetUrl.toString(), {
         method: request.method,

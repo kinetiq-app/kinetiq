@@ -2,7 +2,7 @@
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "kinetiq",
   "main": "worker.js",
-  "compatibility_date": "2026-09-26",
+  "compatibility_date": "2024-09-23",
   "observability": {
     "enabled": true
   },
