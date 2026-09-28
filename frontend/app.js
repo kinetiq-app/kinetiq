@@ -59,6 +59,7 @@ let frameBuffer = []; // frames accumulated since last successful POST
 let lastResponse = null;
 let lastVideoTs = -1;
 let postTimer = null;
+let setStartTime = null;
 
 // ---- positioning & framing state ----
 let sessionPhase = "positioning"; // "positioning" | "countdown" | "active"
@@ -88,15 +89,6 @@ let bicepCurlArms = {
 let lastCurlRepMs = 0;
 
 // ---- connection resilience -------------------------------------------------
-// Render's free tier puts a web service to sleep after ~15 min idle, and the
-// next request pays a 30-60s cold start. That lands on the FIRST request of a
-// session -- exactly when someone is standing in front of the camera. Without
-// this, one failed POST during wake-up dumped the user on a blocking error.
-//
-// Two defences: wake the server before the set starts, and treat early POST
-// failures as "not awake yet" (retry with backoff, keep recording) rather than
-// as a dead end. Frames are never dropped -- they re-queue and replay, so the
-// rep count catches up once the server answers.
 let apiWarm = false;         // has /health answered since page load?
 let sessionMaxFrames = null; // server's per-session frame cap, from /health (null = unknown)
 let tracker = null;          // keeps one visible set continuous across server sessions
@@ -110,10 +102,319 @@ const HARD_FAIL_AFTER = 10;        // give up quietly retrying, ask the user
 const BACKOFF_MAX_MS = 8000;
 
 // ---------------------------------------------------------------------------
-// screens
+// screens & navigation
 function show(name) {
   for (const s of Object.values(screens)) s.classList.remove("active");
   screens[name].classList.add("active");
+  if (name === "live") document.title = "Live — Kinetiq";
+  else if (name === "summary") document.title = "Summary — Kinetiq";
+}
+
+// ---------------------------------------------------------------------------
+// local workout history & dashboard analytics
+const WORKOUT_STORAGE_KEY = "kinetiq_workout_history";
+
+function loadWorkoutHistory() {
+  try {
+    const raw = localStorage.getItem(WORKOUT_STORAGE_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch (err) {
+    console.warn("Could not read workout history:", err);
+    return [];
+  }
+}
+
+function saveWorkoutSession(session) {
+  try {
+    const history = loadWorkoutHistory();
+    history.unshift(session);
+    if (history.length > 250) history.length = 250;
+    localStorage.setItem(WORKOUT_STORAGE_KEY, JSON.stringify(history));
+    refreshDashboard();
+  } catch (err) {
+    console.warn("Could not save workout session:", err);
+  }
+}
+
+function updateGreeting() {
+  const el = $("dash-greeting");
+  if (!el) return;
+  const hour = new Date().getHours();
+  let greeting = "Good evening";
+  if (hour >= 5 && hour < 12) {
+    greeting = "Good morning";
+  } else if (hour >= 12 && hour < 17) {
+    greeting = "Good afternoon";
+  }
+  el.textContent = greeting;
+}
+
+function renderQuickStats(history) {
+  const elWorkouts = $("dash-stat-workouts");
+  const elMins = $("dash-stat-mins");
+  const elStreak = $("dash-stat-streak");
+
+  if (elWorkouts) elWorkouts.textContent = history.length;
+
+  let totalSecs = 0;
+  const activeDays = new Set();
+
+  for (const item of history) {
+    totalSecs += item.durationSeconds || 0;
+    if (item.timestamp) {
+      const d = new Date(item.timestamp);
+      activeDays.add(`${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`);
+    }
+  }
+
+  if (elMins) elMins.textContent = Math.round(totalSecs / 60);
+
+  // Compute consecutive active day streak
+  let streak = 0;
+  const today = new Date();
+  let check = new Date(today);
+  const todayKey = `${check.getFullYear()}-${check.getMonth()}-${check.getDate()}`;
+
+  if (activeDays.has(todayKey)) {
+    streak = 1;
+    check.setDate(check.getDate() - 1);
+  } else {
+    const yesterday = new Date(today);
+    yesterday.setDate(yesterday.getDate() - 1);
+    const yKey = `${yesterday.getFullYear()}-${yesterday.getMonth()}-${yesterday.getDate()}`;
+    if (activeDays.has(yKey)) {
+      streak = 1;
+      check = yesterday;
+      check.setDate(check.getDate() - 1);
+    }
+  }
+
+  while (streak > 0) {
+    const key = `${check.getFullYear()}-${check.getMonth()}-${check.getDate()}`;
+    if (activeDays.has(key)) {
+      streak++;
+      check.setDate(check.getDate() - 1);
+    } else {
+      break;
+    }
+  }
+
+  if (elStreak) elStreak.textContent = `${streak}d`;
+}
+
+function renderHeatmap(history) {
+  const container = $("heatmap-grid");
+  const monthLabel = $("heatmap-month-label");
+  if (!container) return;
+
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = now.getMonth();
+  const monthNames = [
+    "January", "February", "March", "April", "May", "June",
+    "July", "August", "September", "October", "November", "December"
+  ];
+  if (monthLabel) monthLabel.textContent = `${monthNames[month]} ${year}`;
+
+  const dayMins = {};
+  let totalMonthWorkouts = 0;
+
+  for (const item of history) {
+    if (!item.timestamp) continue;
+    const d = new Date(item.timestamp);
+    if (d.getFullYear() === year && d.getMonth() === month) {
+      totalMonthWorkouts++;
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+      const durationMin = (item.durationSeconds || 0) / 60;
+      dayMins[key] = (dayMins[key] || 0) + durationMin;
+    }
+  }
+
+  // 5 weeks x 7 days = 35 cells
+  const firstDay = new Date(year, month, 1);
+  let startOffset = firstDay.getDay() - 1;
+  if (startOffset < 0) startOffset = 6; // Monday = 0, Sunday = 6
+
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+
+  container.innerHTML = "";
+  for (let i = 0; i < 35; i++) {
+    const dayNum = i - startOffset + 1;
+    const cell = document.createElement("div");
+    cell.className = "heatmap-cell level-0";
+
+    if (dayNum >= 1 && dayNum <= daysInMonth) {
+      const dateKey = `${year}-${String(month + 1).padStart(2, "0")}-${String(dayNum).padStart(2, "0")}`;
+      const mins = Math.round(dayMins[dateKey] || 0);
+      let level = "level-0";
+      if (mins >= 20) level = "level-3";
+      else if (mins >= 11) level = "level-2";
+      else if (mins >= 1) level = "level-1";
+
+      cell.className = `heatmap-cell ${level}`;
+      cell.title = `${monthNames[month]} ${dayNum}: ${mins} min${mins === 1 ? "" : "s"}`;
+    } else {
+      cell.style.opacity = "0.2";
+    }
+    container.appendChild(cell);
+  }
+}
+
+function renderWeeklyChart(history) {
+  const chartLine = $("chart-line");
+  const chartArea = $("chart-area");
+  const chartPoints = $("chart-points");
+  const totalBadge = $("weekly-total-badge");
+  const weekLabel = $("chart-week-label");
+
+  const now = new Date();
+  const dayOfWeek = now.getDay();
+  const distToMon = (dayOfWeek + 6) % 7;
+  const monday = new Date(now);
+  monday.setDate(now.getDate() - distToMon);
+  monday.setHours(0, 0, 0, 0);
+
+  const sunday = new Date(monday);
+  sunday.setDate(monday.getDate() + 6);
+  sunday.setHours(23, 59, 59, 999);
+
+  if (weekLabel) {
+    const opts = { month: "short", day: "numeric" };
+    weekLabel.textContent = `${monday.toLocaleDateString(undefined, opts)} – ${sunday.toLocaleDateString(undefined, opts)}`;
+  }
+
+  const weekMins = [0, 0, 0, 0, 0, 0, 0];
+  let totalWeekSeconds = 0;
+
+  for (const item of history) {
+    if (!item.timestamp) continue;
+    const t = item.timestamp;
+    if (t >= monday.getTime() && t <= sunday.getTime()) {
+      const d = new Date(t);
+      const dayIdx = (d.getDay() + 6) % 7;
+      const durSec = item.durationSeconds || 0;
+      weekMins[dayIdx] += durSec / 60;
+      totalWeekSeconds += durSec;
+    }
+  }
+
+  const totalWeekMins = Math.round(totalWeekSeconds / 60);
+  if (totalBadge) totalBadge.textContent = `${totalWeekMins} mins`;
+
+  const peakMins = Math.max(10, ...weekMins);
+  const points = [];
+  const startX = 20;
+  const stepX = 280 / 6;
+
+  for (let i = 0; i < 7; i++) {
+    const x = Math.round(startX + i * stepX);
+    const y = Math.round(90 - (weekMins[i] / peakMins) * 65);
+    points.push({ x, y, mins: Math.round(weekMins[i]) });
+  }
+
+  let pathD = `M ${points[0].x} ${points[0].y}`;
+  for (let i = 1; i < points.length; i++) {
+    pathD += ` L ${points[i].x} ${points[i].y}`;
+  }
+  const areaD = `${pathD} L ${points[6].x} 90 L ${points[0].x} 90 Z`;
+
+  if (chartLine) chartLine.setAttribute("d", pathD);
+  if (chartArea) chartArea.setAttribute("d", areaD);
+
+  if (chartPoints) {
+    chartPoints.innerHTML = "";
+    points.forEach((p) => {
+      if (p.mins > 0) {
+        const circle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+        circle.setAttribute("cx", p.x);
+        circle.setAttribute("cy", p.y);
+        circle.setAttribute("r", "4");
+        circle.setAttribute("class", "chart-dot");
+        const title = document.createElementNS("http://www.w3.org/2000/svg", "title");
+        title.textContent = `${p.mins} mins`;
+        circle.appendChild(title);
+        chartPoints.appendChild(circle);
+      }
+    });
+  }
+}
+
+function refreshDashboard() {
+  updateGreeting();
+  const history = loadWorkoutHistory();
+  renderQuickStats(history);
+  renderHeatmap(history);
+  renderWeeklyChart(history);
+}
+
+function switchTab(name) {
+  const dashPanel = $("tab-dashboard");
+  const workoutsPanel = $("tab-workouts");
+  const dashNav = $("nav-btn-dashboard");
+  const workoutsNav = $("nav-btn-workouts");
+
+  if (name === "dashboard") {
+    if (dashPanel) { dashPanel.hidden = false; dashPanel.classList.add("active"); }
+    if (workoutsPanel) { workoutsPanel.hidden = true; workoutsPanel.classList.remove("active"); }
+    if (dashNav) dashNav.classList.add("active");
+    if (workoutsNav) workoutsNav.classList.remove("active");
+    document.title = "Dashboard — Kinetiq";
+    refreshDashboard();
+  } else {
+    if (workoutsPanel) { workoutsPanel.hidden = false; workoutsPanel.classList.add("active"); }
+    if (dashPanel) { dashPanel.hidden = true; dashPanel.classList.remove("active"); }
+    if (workoutsNav) workoutsNav.classList.add("active");
+    if (dashNav) dashNav.classList.remove("active");
+    document.title = "Workouts — Kinetiq";
+  }
+}
+
+function saveCurrentSession() {
+  try {
+    const timestamp = Date.now();
+    const durationSeconds = setStartTime ? Math.max(1, Math.round((timestamp - setStartTime) / 1000)) : 10;
+
+    let exerciseName = exercise || "Squat";
+    if (exercise === "plank") exerciseName = "Plank (hold)";
+    else if (exercise === "bicep_curl") exerciseName = "Bicep Curl";
+    else if (exercise === "pushup") exerciseName = "Push-up";
+    else if (exercise === "lunge") exerciseName = "Lunge";
+    else if (exercise === "squat") exerciseName = "Squat";
+
+    if (isHoldExercise) {
+      const holdSeconds = Math.round(holdElapsedMs / 1000);
+      if (holdSeconds < 2) return;
+      const cleanPercentage = holdElapsedMs > 0 ? Math.round((holdGoodMs / holdElapsedMs) * 100) : 0;
+      saveWorkoutSession({
+        id: `wk-${timestamp}`,
+        exerciseId: exercise || "plank",
+        exerciseName,
+        timestamp,
+        durationSeconds: Math.max(holdSeconds, durationSeconds),
+        holdSeconds,
+        cleanPercentage,
+      });
+    } else {
+      const repsArr = tracker ? tracker.allReps() : (lastResponse && lastResponse.reps) || [];
+      const backendTotal = tracker ? tracker.totalReps() : lastResponse ? lastResponse.rep_count : 0;
+      const total = exercise === "bicep_curl" ? Math.max(backendTotal, bicepCurlReps) : backendTotal;
+      if (total <= 0) return;
+      const flagged = repsArr.filter((x) => x.flags && x.flags.length > 0);
+      const clean = repsArr.length - flagged.length;
+      const cleanPercentage = repsArr.length > 0 ? Math.round((clean / repsArr.length) * 100) : 100;
+      saveWorkoutSession({
+        id: `wk-${timestamp}`,
+        exerciseId: exercise || "squat",
+        exerciseName,
+        timestamp,
+        durationSeconds,
+        reps: total,
+        cleanPercentage,
+      });
+    }
+  } catch (err) {
+    console.warn("Failed to save current session:", err);
+  }
 }
 function setState(title, msg, actionLabel, actionFn, allowDismiss = false) {
   $("state-title").textContent = title;
@@ -1272,6 +1573,7 @@ async function startSet(ex) {
     flushInFlight = false;
     banner(null);
     clearState();
+    setStartTime = Date.now();
 
     isHoldExercise = (ex === "plank");
     holdStartTime = null;
@@ -1401,6 +1703,7 @@ async function stopSet() {
   scheduleCameraRelease();
   octx.clearRect(0, 0, overlay.width, overlay.height);
   renderSummary(lastResponse);
+  saveCurrentSession();
   show("summary");
 }
 
@@ -1423,6 +1726,7 @@ function backToPicker() {
   clearState();
   banner(null);
   show("picker");
+  switchTab("workouts");
 }
 
 // ---------------------------------------------------------------------------
@@ -1526,11 +1830,50 @@ document.querySelectorAll(".exercise-card").forEach((btn) => {
 });
 $("btn-stop").addEventListener("click", stopSet);
 $("btn-back").addEventListener("click", backToPicker);
-$("btn-again").addEventListener("click", () => {
-  clearState();
-  banner(null);
-  show("picker");
-});
+
+const sumDashBtn = $("btn-sum-dashboard");
+if (sumDashBtn) {
+  sumDashBtn.addEventListener("click", () => {
+    clearState();
+    banner(null);
+    show("picker");
+    switchTab("dashboard");
+  });
+}
+
+const sumWorkoutsBtn = $("btn-sum-workouts");
+if (sumWorkoutsBtn) {
+  sumWorkoutsBtn.addEventListener("click", () => {
+    clearState();
+    banner(null);
+    show("picker");
+    switchTab("workouts");
+  });
+}
+
+const btnAgain = $("btn-again");
+if (btnAgain) {
+  btnAgain.addEventListener("click", () => {
+    clearState();
+    banner(null);
+    show("picker");
+    switchTab("workouts");
+  });
+}
+
+const navDashBtn = $("nav-btn-dashboard");
+if (navDashBtn) {
+  navDashBtn.addEventListener("click", () => switchTab("dashboard"));
+}
+
+const navWorkoutsBtn = $("nav-btn-workouts");
+if (navWorkoutsBtn) {
+  navWorkoutsBtn.addEventListener("click", () => switchTab("workouts"));
+}
+
+// Initialize dashboard & greeting on app startup
+refreshDashboard();
+
 const skipBtn = $("btn-skip-countdown");
 if (skipBtn) {
   skipBtn.addEventListener("click", () => {

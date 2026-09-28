@@ -9,5 +9,17 @@
   "assets": {
     "directory": "frontend",
     "binding": "ASSETS"
+  },
+  "env": {
+    "dev": {
+      "name": "kinetiq-dev",
+      "observability": {
+        "enabled": true
+      },
+      "assets": {
+        "directory": "frontend",
+        "binding": "ASSETS"
+      }
+    }
   }
 }
