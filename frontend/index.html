@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#0f172a" />
   <title>Kinetiq — Live Session</title>
   <link rel="manifest" href="manifest.json" />
-  <link rel="stylesheet" href="styles.css?v=5.0.6" />
+  <link rel="stylesheet" href="styles.css?v=5.0.7" />
 </head>
 <body>
   <!-- ============ SCREEN 1: exercise picker ============ -->
@@ -29,8 +29,16 @@
         <span class="ex-name">Lunge</span>
         <span class="ex-sub">side view</span>
       </button>
+      <button class="exercise-card" data-exercise="bicep_curl">
+        <span class="ex-name">Bicep Curl</span>
+        <span class="ex-sub">side view, arms in frame</span>
+      </button>
+      <button class="exercise-card" data-exercise="plank">
+        <span class="ex-name">Plank (hold)</span>
+        <span class="ex-sub">side view, phone on floor</span>
+      </button>
     </div>
-    <p class="note">Only squat, push-up and lunge are vision-live in this prototype.</p>
+    <p class="note">All 5 exercises are vision-live on device.</p>
   </section>
 
   <!-- ============ SCREEN 2: live session ============ -->
@@ -84,7 +92,7 @@
       <div class="rep-card">
         <div class="rep-card-main">
           <span id="rep-count" class="rep-val">0</span>
-          <span class="rep-lbl">REPS</span>
+          <span id="rep-unit" class="rep-lbl">REPS</span>
         </div>
         <div id="phase" class="rep-phase">—</div>
       </div>
@@ -100,9 +108,10 @@
     <div class="summary-body">
       <div class="summary-stat">
         <div id="sum-reps" class="summary-big">0</div>
-        <div class="summary-label">reps counted</div>
+        <div id="sum-label" class="summary-label">reps counted</div>
       </div>
       <div id="sum-clean" class="summary-line"></div>
+      <div id="sum-hold-breakdown" class="summary-hold-breakdown" hidden></div>
       <div id="sum-flags" class="summary-flaglist"></div>
       <div id="sum-cue" class="summary-cue"></div>
     </div>
@@ -113,6 +122,6 @@
 
   <script src="config.js"></script>
   <!-- MediaPipe Tasks Vision (PoseLandmarker / BlazePose) as an ES module from the CDN. -->
-  <script type="module" src="app.js?v=5.0.6"></script>
+  <script type="module" src="app.js?v=5.0.7"></script>
 </body>
 </html>

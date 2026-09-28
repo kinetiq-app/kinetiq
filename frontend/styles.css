@@ -181,7 +181,12 @@ body{overflow:hidden}
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  padding: 2px 6px;
+  border-radius: 6px;
 }
+.rep-phase.good { color: var(--good); background: rgba(16, 185, 129, 0.15); border: 1px solid rgba(16, 185, 129, 0.3); }
+.rep-phase.warn { color: var(--warn); background: rgba(249, 115, 22, 0.15); border: 1px solid rgba(249, 115, 22, 0.3); }
+.rep-phase.bad  { color: var(--danger); background: rgba(239, 68, 68, 0.15); border: 1px solid rgba(239, 68, 68, 0.3); }
 
 .btn-end-set {
   height: 100%;
@@ -225,6 +230,41 @@ body{overflow:hidden}
 .summary-big{font-size:96px;font-weight:800;color:var(--good);line-height:1}
 .summary-label{color:var(--muted);text-transform:uppercase;letter-spacing:2px;font-size:13px;text-align:center;margin-top:-8px}
 .summary-line{font-size:16px;color:var(--text)}
+.summary-hold-breakdown {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 100%;
+  max-width: 320px;
+  background: var(--card);
+  border: 1px solid #334155;
+  border-radius: 14px;
+  padding: 14px 16px;
+}
+.summary-hold-breakdown[hidden] { display: none !important; }
+.hold-progress-bar {
+  height: 10px;
+  width: 100%;
+  background: #334155;
+  border-radius: 999px;
+  overflow: hidden;
+  display: flex;
+}
+.hold-bar-good { background: var(--good); height: 100%; transition: width 0.3s; }
+.hold-bar-warn { background: var(--warn); height: 100%; transition: width 0.3s; }
+.hold-metrics-list { display: flex; flex-direction: column; gap: 6px; }
+.hold-metric-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 13px;
+  font-weight: 600;
+}
+.hold-tag { display: flex; align-items: center; gap: 6px; }
+.hold-dot { width: 8px; height: 8px; border-radius: 50%; }
+.hold-dot.good { background: var(--good); box-shadow: 0 0 6px rgba(16,185,129,0.8); }
+.hold-dot.warn { background: var(--warn); box-shadow: 0 0 6px rgba(249,115,22,0.8); }
+.hold-val { font-variant-numeric: tabular-nums; color: #fff; }
 .summary-flaglist{display:flex;flex-wrap:wrap;gap:8px;justify-content:center}
 .summary-cue{color:var(--muted);font-size:15px;text-align:center;max-width:340px}
 

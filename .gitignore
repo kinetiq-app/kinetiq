@@ -37,3 +37,4 @@ cloudflared.exe
 
 # Wrangler local dev secrets
 .dev.vars
+.wrangler/

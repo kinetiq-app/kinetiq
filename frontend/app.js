@@ -68,6 +68,25 @@ let countdownVal = 3;
 let smoothedLandmarks = null;
 let audioCtx = null;
 
+// ---- plank hold tracking ----
+let isHoldExercise = false;
+let holdStartTime = null;
+let holdElapsedMs = 0;
+let holdGoodMs = 0;
+let holdWarnMs = 0;
+let holdLastTickMs = null;
+let plankHoldActive = false;
+let plankBreakFrames = 0;
+let plankDominantFaults = {};
+
+// Bicep Curl on-device tracking state (supports front & side view rep counting)
+let bicepCurlReps = 0;
+let bicepCurlArms = {
+  left: { phase: "ready", restElbow: null, peakDisplacement: 0, repStartMs: 0 },
+  right: { phase: "ready", restElbow: null, peakDisplacement: 0, repStartMs: 0 },
+};
+let lastCurlRepMs = 0;
+
 // ---- connection resilience -------------------------------------------------
 // Render's free tier puts a web service to sleep after ~15 min idle, and the
 // next request pays a 30-60s cold start. That lands on the FIRST request of a
@@ -300,6 +319,81 @@ function playBeep(freq = 440, duration = 0.12) {
 }
 
 // ---------------------------------------------------------------------------
+// 2D angle calculation helper (angle at vertex b in degrees)
+function calcAngleDeg(a, b, c) {
+  const rad = Math.atan2(c.y - b.y, c.x - b.x) - Math.atan2(a.y - b.y, a.x - b.x);
+  let deg = Math.abs((rad * 180.0) / Math.PI);
+  if (deg > 180.0) deg = 360.0 - deg;
+  return deg;
+}
+
+// Format milliseconds into MM:SS or Xs for clean display
+function formatHoldTime(ms) {
+  const totalSecs = Math.floor(ms / 1000);
+  const mins = Math.floor(totalSecs / 60);
+  const secs = totalSecs % 60;
+  return mins > 0 ? `${mins}:${secs.toString().padStart(2, "0")}` : `${secs}s`;
+}
+
+// ---------------------------------------------------------------------------
+// Real-time Plank (hold) posture evaluator
+// Analyzes vector alignment between Shoulder, Hip, and Ankle.
+function evaluatePlankPosture(lm) {
+  if (!lm || lm.length < 33) return { state: "broken", angle: 0, cue: "Can't see body" };
+
+  const ls = lm[11], rs = lm[12]; // shoulders
+  const lh = lm[23], rh = lm[24]; // hips
+  const la = lm[27], ra = lm[28]; // ankles
+
+  // Choose side with highest confidence
+  const leftVis = (ls.visibility ?? 0) + (lh.visibility ?? 0) + (la.visibility ?? 0);
+  const rightVis = (rs.visibility ?? 0) + (rh.visibility ?? 0) + (ra.visibility ?? 0);
+
+  const s = leftVis >= rightVis ? ls : rs;
+  const h = leftVis >= rightVis ? lh : rh;
+  const a = leftVis >= rightVis ? la : ra;
+
+  const minVis = Math.min(s.visibility ?? 0, h.visibility ?? 0);
+  if (minVis < 0.40) {
+    return { state: "broken", angle: 0, cue: "Step back into view" };
+  }
+
+  // Orientation check: in a plank, body must be roughly horizontal
+  const dx = Math.abs(s.x - a.x);
+  const dy = Math.abs(s.y - a.y);
+  const isHorizontal = dx > dy * 0.65;
+
+  if (!isHorizontal) {
+    return { state: "broken", angle: 0, cue: "Get down into plank posture" };
+  }
+
+  const angle = calcAngleDeg(s, h, a);
+
+  // Sag vs Pike deviation relative to line connecting shoulder and ankle
+  const t = (h.x - s.x) / (a.x - s.x || 0.0001);
+  const lineY = s.y + t * (a.y - s.y);
+  const diffY = h.y - lineY; // positive = hip sagging down toward floor
+
+  if (angle >= 158 && angle <= 180 && Math.abs(diffY) <= 0.038) {
+    return { state: "good", angle, cue: "Great line — hold steady!" };
+  }
+
+  if (diffY > 0.035 || (angle < 158 && diffY > 0)) {
+    return { state: "sag", angle, cue: "Raise your hips to align with core" };
+  }
+
+  if (diffY < -0.035 || (angle < 158 && diffY < 0)) {
+    return { state: "pike", angle, cue: "Lower your hips to a straight line" };
+  }
+
+  if (angle >= 148 && angle <= 188) {
+    return { state: "good", angle, cue: "Good posture — keep holding" };
+  }
+
+  return { state: "broken", angle, cue: "Plank posture broken" };
+}
+
+// ---------------------------------------------------------------------------
 // framing & positioning evaluator
 // Checks if the user has set the phone down and stepped into full view.
 function evaluateFraming(lm, ex) {
@@ -312,42 +406,195 @@ function evaluateFraming(lm, ex) {
   const lk = lm[25], rk = lm[26]; // knees
 
   const sVisMin = Math.min(ls.visibility ?? 0, rs.visibility ?? 0);
+  const sVisMax = Math.max(ls.visibility ?? 0, rs.visibility ?? 0);
   const hVisMin = Math.min(lh.visibility ?? 0, rh.visibility ?? 0);
+  const hVisMax = Math.max(lh.visibility ?? 0, rh.visibility ?? 0);
   const kVisMax = Math.max(lk.visibility ?? 0, rk.visibility ?? 0);
 
   // 1. Proximity / Holding phone check:
-  // If shoulders span > 42% of frame width, or user bbox is huge (> 85% height),
-  // or shoulders are right at the top edge (< 0.04), user is holding the phone or way too close.
   const shoulderWidth = Math.abs(ls.x - rs.x);
   const shoulderDist = Math.hypot(ls.x - rs.x, ls.y - rs.y);
+  const isSideProfile = shoulderWidth < 0.12;
+
   const kp = lm.map((p) => [p.x, p.y, p.z ?? 0, p.visibility ?? 0]);
   const box = bboxOf(kp);
-  const isTooClose = shoulderWidth > 0.42 || shoulderDist > 0.45 || box[3] > 0.88 || (sVisMin > 0.5 && ls.y < 0.04);
+  const isTooClose = shoulderWidth > 0.42 || shoulderDist > 0.45 || box[3] > 0.88 || (sVisMax > 0.5 && Math.min(ls.y, rs.y) < 0.04);
 
   if (isTooClose) {
     return { ok: false, reason: "Set phone down & step back", isHoldingPhone: true };
   }
 
-  // 2. Both shoulders must be visible
-  if (sVisMin < 0.55) {
-    return { ok: false, reason: "Step back — shoulders not in frame", isHoldingPhone: false };
+  // 2. Shoulders check
+  if (isSideProfile || ex === "bicep_curl") {
+    // In side profile or bicep curl, at least one shoulder must be clearly visible
+    if (sVisMax < 0.45) {
+      return { ok: false, reason: "Step back — shoulders not in frame", isHoldingPhone: false };
+    }
+  } else {
+    // Front/angled squat/lunge/pushup need both shoulders
+    if (sVisMin < 0.45) {
+      return { ok: false, reason: "Step back — shoulders not in frame", isHoldingPhone: false };
+    }
   }
 
-  // 3. Both hips must be visible
-  if (hVisMin < 0.45) {
-    return { ok: false, reason: "Step back — hips not in frame", isHoldingPhone: false };
+  // 3. Hips check
+  if (isSideProfile || ex === "bicep_curl") {
+    if (hVisMax < 0.38) {
+      return { ok: false, reason: "Step back — hips not in frame", isHoldingPhone: false };
+    }
+  } else {
+    if (hVisMin < 0.38) {
+      return { ok: false, reason: "Step back — hips not in frame", isHoldingPhone: false };
+    }
   }
 
   // 4. Exercise-specific requirements:
-  // Standing movements (squat, lunge) need knees in frame
   if (ex === "squat" || ex === "lunge") {
     if (kVisMax < 0.40) {
       return { ok: false, reason: "Step back — knees must be in frame", isHoldingPhone: false };
     }
   }
 
+  if (ex === "bicep_curl") {
+    const le = lm[13], re = lm[14]; // elbows
+    const lw = lm[15], rw = lm[16]; // wrists
+    const leftArmVis = Math.min(ls.visibility ?? 0, le.visibility ?? 0, lw.visibility ?? 0);
+    const rightArmVis = Math.min(rs.visibility ?? 0, re.visibility ?? 0, rw.visibility ?? 0);
+    const bestArmVis = Math.max(leftArmVis, rightArmVis);
+    if (bestArmVis < 0.38) {
+      return { ok: false, reason: "Front or side view — keep elbows & wrists in frame", isHoldingPhone: false };
+    }
+  }
+
+  if (ex === "plank") {
+    return { ok: true, reason: "Place phone on floor, step back into plank", isHoldingPhone: false };
+  }
+
   return { ok: true, reason: "In position! Hold still...", isHoldingPhone: false };
 }
+
+// ---------------------------------------------------------------------------
+// Real-time Bicep Curl Evaluator & Rep Counter
+// Tracks fist elevation relative to shoulder level and monitors elbow stability.
+// Supports both FRONT and SIDE views, with tolerance for natural movement.
+function evaluateBicepCurlLive(lm, now) {
+  if (!lm || lm.length < 33) return;
+
+  const arms = [
+    { side: "left", s: lm[11], e: lm[13], w: lm[15], state: bicepCurlArms.left },
+    { side: "right", s: lm[12], e: lm[14], w: lm[16], state: bicepCurlArms.right },
+  ];
+
+  let repCompletedThisFrame = false;
+  let activePhaseText = "READY";
+  let activeCue = null;
+
+  for (const arm of arms) {
+    const s = arm.s, e = arm.e, w = arm.w;
+    const vis = Math.min(s.visibility ?? 0, e.visibility ?? 0, w.visibility ?? 0);
+    if (vis < 0.35) continue;
+
+    const uLen = Math.hypot(s.x - e.x, s.y - e.y);
+    if (uLen < 0.05) continue;
+
+    const angle = calcAngleDeg(s, e, w);
+
+    // Fist proximity to shoulder level:
+    // When fist is near shoulder level, (w.y - s.y) is small (within 40% of upper arm length)
+    // or elbow angle is flexed <= 75 degrees.
+    const distToShoulderY = w.y - s.y;
+    const isAtShoulder = distToShoulderY <= 0.40 * uLen || angle <= 75.0;
+
+    // Full extension at bottom: wrist below elbow or angle near 140+ degrees
+    const isExtendedAtBottom = (w.y >= e.y + 0.10 * uLen) || angle >= 140.0;
+
+    const st = arm.state;
+
+    if (st.phase === "ready") {
+      st.restElbow = { x: e.x, y: e.y };
+      st.peakDisplacement = 0;
+      st.repStartMs = 0;
+
+      // User starts curling: arm leaves full bottom extension
+      if (!isExtendedAtBottom && angle < 135.0) {
+        st.phase = "curling";
+        st.repStartMs = now;
+        st.peakDisplacement = 0;
+      }
+    } else if (st.phase === "curling") {
+      activePhaseText = "CURLING UP";
+
+      if (st.restElbow) {
+        const drift = Math.hypot(e.x - st.restElbow.x, e.y - st.restElbow.y) / uLen;
+        if (drift > st.peakDisplacement) st.peakDisplacement = drift;
+      }
+
+      if (isAtShoulder) {
+        st.phase = "top";
+      } else if (isExtendedAtBottom) {
+        st.phase = "ready";
+      }
+    } else if (st.phase === "top") {
+      activePhaseText = "TOP CONTRACTION";
+
+      if (st.restElbow) {
+        const drift = Math.hypot(e.x - st.restElbow.x, e.y - st.restElbow.y) / uLen;
+        if (drift > st.peakDisplacement) st.peakDisplacement = drift;
+      }
+
+      // Descending away from shoulder level
+      if (distToShoulderY > 0.45 * uLen && angle > 80.0) {
+        st.phase = "lowering";
+      }
+    } else if (st.phase === "lowering") {
+      activePhaseText = "LOWERING";
+
+      if (st.restElbow) {
+        const drift = Math.hypot(e.x - st.restElbow.x, e.y - st.restElbow.y) / uLen;
+        if (drift > st.peakDisplacement) st.peakDisplacement = drift;
+      }
+
+      // Reached bottom extension: validate and count rep
+      if (isExtendedAtBottom) {
+        const repDuration = now - (st.repStartMs || now);
+        if (repDuration >= 400 && (now - lastCurlRepMs > 350)) {
+          repCompletedThisFrame = true;
+          lastCurlRepMs = now;
+          bicepCurlReps++;
+
+          // Form assessment: elbow stability check with room for error
+          const excessiveElbowMove = st.peakDisplacement > 0.45;
+          if (excessiveElbowMove) {
+            activeCue = "Rep counted! Next rep, keep elbows more pinned";
+          } else {
+            activeCue = "Good rep! Elbows stayed stationary";
+          }
+        }
+        st.phase = "ready";
+        st.restElbow = { x: e.x, y: e.y };
+        st.peakDisplacement = 0;
+      }
+    }
+  }
+
+  if (repCompletedThisFrame) {
+    playBeep(880, 0.15);
+    const totalReps = tracker ? Math.max(tracker.totalReps(), bicepCurlReps) : bicepCurlReps;
+    $("rep-count").textContent = String(totalReps);
+    $("phase").textContent = "REP COMPLETED";
+    $("phase").className = "rep-phase good";
+    if (activeCue) {
+      $("cue").textContent = activeCue;
+      $("cue").hidden = false;
+    }
+  } else {
+    if (sessionPhase === "active" && !$("phase").textContent.includes("COMPLETED")) {
+      $("phase").textContent = activePhaseText;
+      $("phase").className = "rep-phase";
+    }
+  }
+}
+
 
 // ---------------------------------------------------------------------------
 // temporal exponential moving average (EMA) filter
@@ -505,54 +752,143 @@ function loop() {
     const result = landmarker.detectForVideo(video, now);
     if (result.landmarks && result.landmarks.length > 0) {
       const rawLm = result.landmarks[0];
-      const framing = evaluateFraming(rawLm, exercise);
-      const inFrame = framing.ok;
+      const smoothed = smoothLandmarks(rawLm);
+      const lmToUse = smoothed || rawLm;
 
-      // Draw wireframe only if shoulders are visible and user is not holding phone close
-      const sVisMin = Math.min(rawLm[11].visibility ?? 0, rawLm[12].visibility ?? 0);
-      const canDraw = sVisMin >= 0.50 && !framing.isHoldingPhone;
+      if (exercise === "plank") {
+        // ==========================================
+        // ---- PLANK (HOLD) ENGINE ----
+        // ==========================================
+        const posture = evaluatePlankPosture(lmToUse);
+        const isDecentForm = posture.state === "good" || posture.state === "sag" || posture.state === "pike";
 
-      if (canDraw) {
-        const smoothed = smoothLandmarks(rawLm);
-        drawSkeleton(smoothed);
-      } else {
-        smoothedLandmarks = null;
-        octx.clearRect(0, 0, overlay.width, overlay.height);
-      }
+        // Dynamic theme for plank wireframe:
+        // Green (good) / Yellow (sag or pike) / Red (broken)
+        let plankTheme = { r: 16, g: 185, b: 129 }; // Green
+        if (posture.state === "sag" || posture.state === "pike") {
+          plankTheme = { r: 250, g: 204, b: 21 }; // Yellow
+        } else if (posture.state === "broken") {
+          plankTheme = { r: 239, g: 68, b: 68 }; // Red
+        }
 
-      // STATE MACHINE:
-      if (sessionPhase === "positioning") {
-        $("hud-lock").className = "lock-pill lock-unknown";
-        $("hud-lock").textContent = framing.isHoldingPhone ? "set phone down" : (inFrame ? "in position" : "step back");
-        showGuidePill(framing.reason, inFrame);
+        drawSkeleton(lmToUse, plankTheme);
 
-        if (inFrame) {
-          steadyFrameCount++;
-          // Stably positioned for ~18 frames (~0.5-0.6s)
-          if (steadyFrameCount >= 18) {
-            startCountdown();
+        if (!plankHoldActive) {
+          // Automatic Start: starts automatically when user assumes a valid plank position
+          if (isDecentForm) {
+            steadyFrameCount++;
+            showGuidePill(posture.state === "good" ? "Starting hold!" : "Starting hold — adjust posture", true, "✓");
+            if (steadyFrameCount >= 8) {
+              plankHoldActive = true;
+              holdStartTime = now;
+              holdLastTickMs = now;
+              playBeep(880, 0.2); // Start chime
+              hideGuidePill();
+              $("hud-lock").className = "lock-pill lock-ok";
+              $("hud-lock").textContent = "holding plank";
+            }
+          } else {
+            steadyFrameCount = 0;
+            showGuidePill(posture.cue, false);
+            $("hud-lock").className = "lock-pill lock-unknown";
+            $("hud-lock").textContent = "get ready";
           }
         } else {
-          steadyFrameCount = 0;
+          // Active hold in progress
+          if (isDecentForm) {
+            const dt = now - (holdLastTickMs || now);
+            holdElapsedMs += dt;
+            if (posture.state === "good") {
+              holdGoodMs += dt;
+              $("phase").textContent = "PERFECT FORM";
+              $("phase").className = "rep-phase good";
+              $("cue").hidden = true;
+            } else {
+              holdWarnMs += dt;
+              plankDominantFaults[posture.state] = (plankDominantFaults[posture.state] || 0) + dt;
+              $("phase").textContent = posture.state === "sag" ? "HIP SAG" : "HIP PIKE";
+              $("phase").className = "rep-phase warn";
+              $("cue").textContent = posture.cue;
+              $("cue").hidden = false;
+            }
+            holdLastTickMs = now;
+            $("rep-count").textContent = formatHoldTime(holdElapsedMs);
+            plankBreakFrames = 0;
+          } else {
+            // Posture broken (collapsed, knees on floor, or stood up)
+            plankBreakFrames++;
+            $("phase").textContent = "FORM BROKEN";
+            $("phase").className = "rep-phase bad";
+            $("cue").textContent = "Posture broken — hold straight line";
+            $("cue").hidden = false;
+            holdLastTickMs = now;
+
+            // Automatic Stop on exhaustion (>1.2s break)
+            if (plankBreakFrames > 35) {
+              playBeep(440, 0.35); // finish tone
+              stopSet();
+              return;
+            }
+          }
         }
-      } else if (sessionPhase === "countdown") {
-        if (!inFrame && !framing.isHoldingPhone) {
-          steadyFrameCount = 0;
-          cancelCountdown("Stepped out of frame — step back to restart");
-        }
-      } else if (sessionPhase === "active") {
-        if (inFrame) {
-          // Send frame to detector
-          frameBuffer.push(buildFrame(smoothedLandmarks || rawLm, now));
-          $("hud-lock").className = "lock-pill lock-ok";
-          $("hud-lock").textContent = "locked on you";
-          hideGuidePill();
+      } else {
+        // ==========================================
+        // ---- REP-BASED EXERCISES ----
+        // ==========================================
+        const framing = evaluateFraming(rawLm, exercise);
+        const inFrame = framing.ok;
+
+        // Draw wireframe only if shoulders are visible and user is not holding phone close
+        const sVisMax = Math.max(rawLm[11].visibility ?? 0, rawLm[12].visibility ?? 0);
+        const sVisMin = Math.min(rawLm[11].visibility ?? 0, rawLm[12].visibility ?? 0);
+        const isSide = Math.abs(rawLm[11].x - rawLm[12].x) < 0.12;
+        const canDraw = ((isSide || exercise === "bicep_curl") ? sVisMax >= 0.45 : sVisMin >= 0.45) && !framing.isHoldingPhone;
+
+        if (canDraw) {
+          drawSkeleton(lmToUse, { r: 16, g: 185, b: 129 });
         } else {
-          // User walked away, phone tilted, or user walking up to phone to end set.
-          // CRITICAL: Do NOT push frames to buffer! Prevents end-of-set false reps.
-          $("hud-lock").className = "lock-pill lock-lost";
-          $("hud-lock").textContent = framing.isHoldingPhone ? "too close" : "can't see you";
-          showGuidePill(framing.reason, false);
+          smoothedLandmarks = null;
+          octx.clearRect(0, 0, overlay.width, overlay.height);
+        }
+
+        // STATE MACHINE:
+        if (sessionPhase === "positioning") {
+          $("hud-lock").className = "lock-pill lock-unknown";
+          $("hud-lock").textContent = framing.isHoldingPhone ? "set phone down" : (inFrame ? "in position" : "step back");
+          showGuidePill(framing.reason, inFrame);
+
+          if (inFrame) {
+            steadyFrameCount++;
+            // Stably positioned for ~18 frames (~0.5-0.6s)
+            if (steadyFrameCount >= 18) {
+              startCountdown();
+            }
+          } else {
+            steadyFrameCount = 0;
+          }
+        } else if (sessionPhase === "countdown") {
+          if (!inFrame && !framing.isHoldingPhone) {
+            steadyFrameCount = 0;
+            cancelCountdown("Stepped out of frame — step back to restart");
+          }
+        } else if (sessionPhase === "active") {
+          if (inFrame) {
+            // Send frame to detector
+            frameBuffer.push(buildFrame(lmToUse, now));
+            $("hud-lock").className = "lock-pill lock-ok";
+            $("hud-lock").textContent = "locked on you";
+            hideGuidePill();
+
+            if (exercise === "bicep_curl") {
+              evaluateBicepCurlLive(lmToUse, now);
+            }
+          } else {
+            // User walked away, phone tilted, or user walking up to phone to end set.
+            // CRITICAL: Do NOT push frames to buffer! Prevents end-of-set false reps.
+            $("hud-lock").className = "lock-pill lock-lost";
+            $("hud-lock").textContent = framing.isHoldingPhone ? "too close" : "can't see you";
+            showGuidePill(framing.reason, false);
+          }
         }
       }
     } else {
@@ -560,17 +896,32 @@ function loop() {
       smoothedLandmarks = null;
       octx.clearRect(0, 0, overlay.width, overlay.height);
 
-      if (sessionPhase === "positioning") {
-        steadyFrameCount = 0;
-        showGuidePill("Step into camera view", false);
-        $("hud-lock").className = "lock-pill lock-lost";
-        $("hud-lock").textContent = "can't see you";
-      } else if (sessionPhase === "countdown") {
-        cancelCountdown("Can't see you — step back into frame");
-      } else if (sessionPhase === "active") {
-        $("hud-lock").className = "lock-pill lock-lost";
-        $("hud-lock").textContent = "can't see you";
-        showGuidePill("Step back into frame", false);
+      if (exercise === "plank") {
+        if (plankHoldActive) {
+          plankBreakFrames++;
+          if (plankBreakFrames > 35) {
+            playBeep(440, 0.35);
+            stopSet();
+            return;
+          }
+        } else {
+          showGuidePill("Place phone on floor, step back into plank", false);
+          $("hud-lock").className = "lock-pill lock-lost";
+          $("hud-lock").textContent = "can't see you";
+        }
+      } else {
+        if (sessionPhase === "positioning") {
+          steadyFrameCount = 0;
+          showGuidePill("Step into camera view", false);
+          $("hud-lock").className = "lock-pill lock-lost";
+          $("hud-lock").textContent = "can't see you";
+        } else if (sessionPhase === "countdown") {
+          cancelCountdown("Can't see you — step back into frame");
+        } else if (sessionPhase === "active") {
+          $("hud-lock").className = "lock-pill lock-lost";
+          $("hud-lock").textContent = "can't see you";
+          showGuidePill("Step back into frame", false);
+        }
       }
     }
   }
@@ -772,7 +1123,9 @@ async function flush({ final = false } = {}) {
 // ---------------------------------------------------------------------------
 // render a response
 function render(r) {
-  $("rep-count").textContent = tracker ? tracker.totalReps() : r.rep_count;
+  const backendReps = tracker ? tracker.totalReps() : r.rep_count;
+  const displayReps = exercise === "bicep_curl" ? Math.max(backendReps, bicepCurlReps) : backendReps;
+  $("rep-count").textContent = displayReps;
   $("phase").textContent = r.phase || "—";
 
   const lock = $("hud-lock");
@@ -839,14 +1192,15 @@ const KEY_JOINTS = [
   27, 28,             // Ankles
 ];
 
-function drawSkeleton(lm) {
+function drawSkeleton(lm, theme = { r: 16, g: 185, b: 129 }) {
   octx.clearRect(0, 0, overlay.width, overlay.height);
   if (!lm || lm.length < 33) return;
 
-  // Anchor check: both shoulders must be visible with at least 0.50 visibility.
-  // If the core upper body isn't in frame, don't draw an isolated limb glitching around!
+  // Anchor check: at least one shoulder must be visible (supports side profile view and front view)
+  const sVisMax = Math.max(lm[11].visibility ?? 0, lm[12].visibility ?? 0);
   const sVisMin = Math.min(lm[11].visibility ?? 0, lm[12].visibility ?? 0);
-  if (sVisMin < 0.50) return;
+  const isSide = Math.abs(lm[11].x - lm[12].x) < 0.12;
+  if (isSide ? sVisMax < 0.40 : sVisMin < 0.35) return;
 
   octx.lineCap = "round";
 
@@ -856,12 +1210,12 @@ function drawSkeleton(lm) {
     if (!pa || !pb) continue;
     const visA = pa.visibility ?? 0;
     const visB = pb.visibility ?? 0;
-    if (visA < 0.50 || visB < 0.50) continue;
+    if (visA < 0.45 || visB < 0.45) continue;
 
     const alpha = Math.min(visA, visB);
     octx.beginPath();
     octx.lineWidth = 3.5;
-    octx.strokeStyle = `rgba(16, 185, 129, ${alpha.toFixed(2)})`;
+    octx.strokeStyle = `rgba(${theme.r}, ${theme.g}, ${theme.b}, ${alpha.toFixed(2)})`;
     octx.moveTo(pa.x * overlay.width, pa.y * overlay.height);
     octx.lineTo(pb.x * overlay.width, pb.y * overlay.height);
     octx.stroke();
@@ -872,14 +1226,14 @@ function drawSkeleton(lm) {
     const p = lm[idx];
     if (!p) continue;
     const vis = p.visibility ?? 0;
-    if (vis < 0.50) continue;
+    if (vis < 0.45) continue;
 
     const x = p.x * overlay.width;
     const y = p.y * overlay.height;
 
-    // Emerald halo
+    // Color halo
     octx.beginPath();
-    octx.fillStyle = `rgba(16, 185, 129, ${vis.toFixed(2)})`;
+    octx.fillStyle = `rgba(${theme.r}, ${theme.g}, ${theme.b}, ${vis.toFixed(2)})`;
     octx.arc(x, y, 5, 0, Math.PI * 2);
     octx.fill();
 
@@ -919,6 +1273,23 @@ async function startSet(ex) {
     banner(null);
     clearState();
 
+    isHoldExercise = (ex === "plank");
+    holdStartTime = null;
+    holdElapsedMs = 0;
+    holdGoodMs = 0;
+    holdWarnMs = 0;
+    holdLastTickMs = null;
+    plankHoldActive = false;
+    plankBreakFrames = 0;
+    plankDominantFaults = {};
+
+    bicepCurlReps = 0;
+    bicepCurlArms = {
+      left: { phase: "ready", restElbow: null, peakDisplacement: 0, repStartMs: 0 },
+      right: { phase: "ready", restElbow: null, peakDisplacement: 0, repStartMs: 0 },
+    };
+    lastCurlRepMs = 0;
+
     sessionPhase = "positioning";
     steadyFrameCount = 0;
     smoothedLandmarks = null;
@@ -934,15 +1305,27 @@ async function startSet(ex) {
       if (audioCtx && audioCtx.state === "suspended") audioCtx.resume();
     } catch {}
 
-    $("hud-exercise").textContent = ex;
-    $("rep-count").textContent = "0";
-    $("phase").textContent = "—";
+    let displayName = ex;
+    if (ex === "plank") displayName = "Plank (hold)";
+    else if (ex === "bicep_curl") displayName = "Bicep Curl";
+    else if (ex === "pushup") displayName = "Push-up";
+    $("hud-exercise").textContent = displayName;
+
+    const repUnitEl = $("rep-unit");
+    if (repUnitEl) repUnitEl.textContent = isHoldExercise ? "HOLD" : "REPS";
+    $("rep-count").textContent = isHoldExercise ? "0s" : "0";
+    $("phase").textContent = isHoldExercise ? "GET READY" : "—";
+    $("phase").className = "rep-phase";
     $("hud-lock").className = "lock-pill lock-unknown";
-    $("hud-lock").textContent = "step back";
+    $("hud-lock").textContent = isHoldExercise ? "get ready" : "step back";
     $("cue").hidden = true;
     $("flags").innerHTML = "";
     show("live");
-    showGuidePill("Set phone down & step back", false);
+
+    let initialGuide = "Set phone down & step back";
+    if (ex === "plank") initialGuide = "Place phone on floor, step back into plank";
+    else if (ex === "bicep_curl") initialGuide = "Front or side view — keep elbows & fists in frame";
+    showGuidePill(initialGuide, false);
 
     // 1. Pose model: only show warmup overlay if landmarker is not yet in memory
     if (!landmarker) {
@@ -966,7 +1349,6 @@ async function startSet(ex) {
     }
 
     // Wake the detector in the background if not already awake.
-    // Use the non-blocking banner strip so the camera view and skeleton remain fully visible!
     if (!apiWarm) {
       banner("Waking the server — your reps are being recorded and will catch up.");
       wakeApi((m) => banner(m)).then((awake) => {
@@ -996,6 +1378,7 @@ async function startSet(ex) {
 
 async function stopSet() {
   running = false;
+  plankHoldActive = false;
   clearInterval(countdownTimer);
   countdownTimer = null;
   sessionPhase = "positioning";
@@ -1008,9 +1391,12 @@ async function stopSet() {
     postTimer = null;
   }
   clearState();
-  // Wait out any POST already in flight, then deliver whatever is still queued.
-  for (let i = 0; i < 50 && flushInFlight; i++) await new Promise((r) => setTimeout(r, 100));
-  await flush({ final: true }); // final flush so the last reps are counted
+
+  if (!isHoldExercise) {
+    // Wait out any POST already in flight, then deliver whatever is still queued.
+    for (let i = 0; i < 50 && flushInFlight; i++) await new Promise((r) => setTimeout(r, 100));
+    await flush({ final: true }); // final flush so the last reps are counted
+  }
   stopCamera(false); // keep stream warm for next exercise, pause video
   scheduleCameraRelease();
   octx.clearRect(0, 0, overlay.width, overlay.height);
@@ -1020,6 +1406,7 @@ async function stopSet() {
 
 function backToPicker() {
   running = false;
+  plankHoldActive = false;
   clearInterval(countdownTimer);
   countdownTimer = null;
   sessionPhase = "positioning";
@@ -1039,18 +1426,75 @@ function backToPicker() {
 }
 
 // ---------------------------------------------------------------------------
-// summary from the accumulated reps[]
+// summary from the accumulated reps[] or hold time
 function renderSummary(r) {
+  if (isHoldExercise) {
+    $("sum-reps").textContent = formatHoldTime(holdElapsedMs);
+    const sumLabel = $("sum-label");
+    if (sumLabel) sumLabel.textContent = "total hold time";
+
+    const totalHoldSecs = Math.round(holdElapsedMs / 1000);
+    const goodSecs = Math.round(holdGoodMs / 1000);
+    const warnSecs = Math.max(0, totalHoldSecs - goodSecs);
+    const goodPct = totalHoldSecs > 0 ? Math.round((holdGoodMs / holdElapsedMs) * 100) : 0;
+    const warnPct = totalHoldSecs > 0 ? 100 - goodPct : 0;
+
+    $("sum-clean").textContent = totalHoldSecs >= 3
+      ? (goodPct >= 70 ? "Strong hold! Excellent alignment." : "Good effort — room to improve core alignment.")
+      : "Hold was too short to score.";
+
+    const breakdownEl = $("sum-hold-breakdown");
+    if (breakdownEl) {
+      breakdownEl.hidden = false;
+      breakdownEl.innerHTML = `
+        <div class="hold-progress-bar">
+          <div class="hold-bar-good" style="width: ${goodPct}%"></div>
+          <div class="hold-bar-warn" style="width: ${warnPct}%"></div>
+        </div>
+        <div class="hold-metrics-list">
+          <div class="hold-metric-row">
+            <span class="hold-tag"><span class="hold-dot good"></span> Perfect Form</span>
+            <span class="hold-val">${goodSecs}s (${goodPct}%)</span>
+          </div>
+          <div class="hold-metric-row">
+            <span class="hold-tag"><span class="hold-dot warn"></span> Adjusted Form</span>
+            <span class="hold-val">${warnSecs}s (${warnPct}%)</span>
+          </div>
+        </div>
+      `;
+    }
+
+    $("sum-flags").innerHTML = "";
+    let cueText = "Great effort.";
+    if (plankDominantFaults["sag"] && plankDominantFaults["sag"] > (plankDominantFaults["pike"] || 0)) {
+      cueText = "Primary deviation: Hip Sag — focus on engaging your core and lifting hips to align with shoulders.";
+    } else if (plankDominantFaults["pike"]) {
+      cueText = "Primary deviation: Hip Pike — focus on lowering your hips slightly to maintain a flat, neutral spine.";
+    } else if (goodPct >= 80) {
+      cueText = "Excellent stamina and straight-line posture throughout your hold!";
+    }
+    $("sum-cue").textContent = cueText;
+    return;
+  }
+
+  // Rep-based summary
+  const breakdownEl = $("sum-hold-breakdown");
+  if (breakdownEl) breakdownEl.hidden = true;
+  const sumLabel = $("sum-label");
+  if (sumLabel) sumLabel.textContent = "reps counted";
+
   // A long set may have spanned several server sessions; the tracker holds all of them.
   const reps = tracker ? tracker.allReps() : (r && r.reps) || [];
-  const total = tracker ? tracker.totalReps() : r ? r.rep_count : 0;
+  const backendTotal = tracker ? tracker.totalReps() : r ? r.rep_count : 0;
+  const total = exercise === "bicep_curl" ? Math.max(backendTotal, bicepCurlReps) : backendTotal;
   $("sum-reps").textContent = total;
 
   const flagged = reps.filter((x) => x.flags && x.flags.length > 0);
   const clean = reps.length - flagged.length;
-  $("sum-clean").textContent = reps.length
+  let cleanText = reps.length
     ? `${clean} clean · ${flagged.length} flagged`
-    : "No completed reps detected.";
+    : (total > 0 ? `${total} clean curls completed` : "No completed reps detected.");
+  $("sum-clean").textContent = cleanText;
 
   // tally flags across the set
   const tally = {};
@@ -1064,8 +1508,8 @@ function renderSummary(r) {
     el.textContent = `${prettyFlag(f)} ×${n}`;
     list.appendChild(el);
   }
-  let note = reps.length
-    ? "Keypoints only were sent to the detector — no video left your device."
+  let note = total > 0
+    ? (exercise === "bicep_curl" ? "Fists reached shoulder level with controlled elbow position. Keypoints only processed." : "Keypoints only were sent to the detector — no video left your device.")
     : "Try again — make sure your whole body is in frame.";
   // Say so if a long outage forced us to shed frames; a quietly low count would be dishonest.
   if (droppedFrames > 0) {

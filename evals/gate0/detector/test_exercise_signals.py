@@ -72,6 +72,34 @@ class TestPrimaryAngle(unittest.TestCase):
         person = {"track_id": 0, "kp": [], "box": [0, 0, 1, 1]}
         self.assertIsNone(primary_angle(person, MOVENET, "squat"))
 
+    def test_bicep_curl_side_view(self):
+        # Extended arm: near 180 deg
+        extended = make_person({
+            "left_shoulder": (0.5, 0.3), "left_elbow": (0.5, 0.5), "left_wrist": (0.5, 0.7),
+        })
+        self.assertGreater(primary_angle(extended, MOVENET, "bicep_curl"), 150.0)
+
+        # Curled arm in side view (forearm angled up towards shoulder)
+        curled = make_person({
+            "left_shoulder": (0.5, 0.3), "left_elbow": (0.5, 0.5), "left_wrist": (0.62, 0.35),
+        })
+        self.assertLess(primary_angle(curled, MOVENET, "bicep_curl"), 70.0)
+
+    def test_bicep_curl_front_view(self):
+        # Extended arm in front view: fist below elbow
+        extended = make_person({
+            "left_shoulder": (0.4, 0.3), "left_elbow": (0.4, 0.55), "left_wrist": (0.4, 0.75),
+            "right_shoulder": (0.6, 0.3), "right_elbow": (0.6, 0.55), "right_wrist": (0.6, 0.75),
+        })
+        self.assertGreater(primary_angle(extended, MOVENET, "bicep_curl"), 140.0)
+
+        # Curled arm in front view: fist reaches shoulder level
+        curled = make_person({
+            "left_shoulder": (0.4, 0.3), "left_elbow": (0.4, 0.55), "left_wrist": (0.4, 0.32),
+            "right_shoulder": (0.6, 0.3), "right_elbow": (0.6, 0.55), "right_wrist": (0.6, 0.75),
+        })
+        self.assertLess(primary_angle(curled, MOVENET, "bicep_curl"), 60.0)
+
     def test_unscoped_exercise_raises(self):
         person = make_person({})
         with self.assertRaises(KeyError):

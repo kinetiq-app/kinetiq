@@ -168,5 +168,43 @@ class TestScoreSubjectLockAgainstExpected(unittest.TestCase):
         self.assertEqual(stats["frames_on_expected_subject"], stats["frames_total"])
 
 
+class TestBicepCurlRepCounts(unittest.TestCase):
+    def test_bicep_curl_rep_counts_cleanly(self):
+        # 1 rep: arm extended (0-200ms), curling up to shoulder (300-600ms), returning down (700-1000ms)
+        frames = []
+        # Arm positions
+        base_body = {
+            "left_hip": (0.45, 0.5), "left_knee": (0.45, 0.7), "left_ankle": (0.45, 0.9),
+            "right_hip": (0.55, 0.5), "right_knee": (0.55, 0.7), "right_ankle": (0.55, 0.9),
+            "left_shoulder": (0.4, 0.3), "left_elbow": (0.4, 0.55),
+            "right_shoulder": (0.6, 0.3), "right_elbow": (0.6, 0.55), "right_wrist": (0.6, 0.75),
+        }
+        # Start at rest: left wrist at (0.4, 0.75)
+        for t in range(0, 300, 50):
+            p = make_person(0, {**base_body, "left_wrist": (0.4, 0.75)})
+            frames.append(frame(t, [p]))
+        # Ascend (curl up towards shoulder): wrist moves 0.75 -> 0.32
+        for i, t in enumerate(range(300, 650, 50)):
+            frac = (i + 1) / 7.0
+            wy = 0.75 - frac * (0.75 - 0.32)
+            p = make_person(0, {**base_body, "left_wrist": (0.4, wy)})
+            frames.append(frame(t, [p]))
+        # Descend (return to rest): wrist moves 0.32 -> 0.75
+        for i, t in enumerate(range(650, 1100, 50)):
+            frac = (i + 1) / 9.0
+            wy = 0.32 + frac * (0.75 - 0.32)
+            p = make_person(0, {**base_body, "left_wrist": (0.4, wy)})
+            frames.append(frame(t, [p]))
+        # Hold at rest
+        for t in range(1100, 1350, 50):
+            p = make_person(0, {**base_body, "left_wrist": (0.4, 0.75)})
+            frames.append(frame(t, [p]))
+
+        detected = run_detector(frames, "bicep_curl")
+        self.assertEqual(detected.detected_reps, 1)
+        self.assertGreater(detected.reps[0].form_score, 5.0)
+
+
 if __name__ == "__main__":
     unittest.main()
+

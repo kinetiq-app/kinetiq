@@ -126,8 +126,8 @@ def _rep_aggregate_flags(exercise_id: str, exercise_json: Dict[str, Any], rep_mi
         return ["shallow_pushup"] if shallow_pushup_present(rep_min_angle, exercise_json) else []
     if exercise_id == "lunge":
         return ["shallow_lunge"] if shallow_lunge_present(rep_min_angle, exercise_json) else []
-    if exercise_id == "squat":
-        return []  # squat has no rep-aggregate flags
+    if exercise_id in ("squat", "bicep_curl", "plank"):
+        return []  # squat, bicep_curl, plank have no rep-aggregate flags
     raise KeyError(
         f"detector.faults is scoped to {scoped_exercises()}; {exercise_id!r} needs its own "
         f"fault evaluator added before Stage 1 can score its form"
