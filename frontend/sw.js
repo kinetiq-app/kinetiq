@@ -14,7 +14,7 @@
 //
 // CACHE is versioned. Bump it whenever the shell's caching behaviour changes;
 // `activate` deletes every cache that is not the current one.
-const CACHE = "kinetiq-v5-shell-v7";
+const CACHE = "kinetiq-v6-shell-v2";
 
 const SHELL = [
   "./",
@@ -25,6 +25,7 @@ const SHELL = [
   "./config.js",
   "./severities.json",
   "./manifest.json",
+  "./kinetiq-logo.jpg",
 ];
 
 self.addEventListener("install", (e) => {
