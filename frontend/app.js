@@ -39,6 +39,8 @@ const API = resolvedApi.replace(/\/+$/, "");
 // ---- DOM ----
 const $ = (id) => document.getElementById(id);
 const screens = {
+  splash: $("screen-splash"),
+  onboarding: $("screen-onboarding"),
   picker: $("screen-picker"),
   live: $("screen-live"),
   summary: $("screen-summary"),
@@ -108,6 +110,9 @@ function show(name) {
   screens[name].classList.add("active");
   if (name === "live") document.title = "Live — Kinetiq";
   else if (name === "summary") document.title = "Summary — Kinetiq";
+  else if (name === "picker") document.title = "Workouts — Kinetiq";
+  else if (name === "onboarding") document.title = "Welcome — Kinetiq";
+  else if (name === "splash") document.title = "Kinetiq";
 }
 
 // ---------------------------------------------------------------------------
@@ -343,8 +348,11 @@ function refreshDashboard() {
   updateGreeting();
   const history = loadWorkoutHistory();
   renderQuickStats(history);
+  applyZeroStates(history);
   renderHeatmap(history);
   renderWeeklyChart(history);
+  renderRecentWorkouts(history);
+  refreshDashboardProfile();
 }
 
 function switchTab(name) {
@@ -367,6 +375,228 @@ function switchTab(name) {
     if (dashNav) dashNav.classList.remove("active");
     document.title = "Workouts — Kinetiq";
   }
+}
+
+// ---------------------------------------------------------------------------
+// user profile (localStorage)
+const PROFILE_STORAGE_KEY = "kinetiq_user_profile";
+
+function loadProfile() {
+  try {
+    const raw = localStorage.getItem(PROFILE_STORAGE_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch { return null; }
+}
+
+function saveProfile(profile) {
+  try {
+    localStorage.setItem(PROFILE_STORAGE_KEY, JSON.stringify(profile));
+  } catch (err) {
+    console.warn("Could not save profile:", err);
+  }
+}
+
+// Update the user avatar chip in the dashboard header
+function refreshDashboardProfile() {
+  const profile = loadProfile();
+  const chip = $("dash-user-chip");
+  const avatarEl = $("dash-avatar-initials");
+  const nameEl = $("dash-user-name-label");
+  const greetingEl = $("dash-greeting");
+  const subtitleEl = $("dash-subtitle-text");
+
+  if (profile && profile.name) {
+    if (chip) chip.hidden = false;
+    if (avatarEl) avatarEl.textContent = profile.name.charAt(0).toUpperCase();
+    if (nameEl) nameEl.textContent = profile.name;
+    if (greetingEl) {
+      const hour = new Date().getHours();
+      let g = "Good evening";
+      if (hour >= 5 && hour < 12) g = "Good morning";
+      else if (hour >= 12 && hour < 17) g = "Good afternoon";
+      greetingEl.textContent = `${g}, ${profile.name.split(" ")[0]}`;
+    }
+    if (subtitleEl) subtitleEl.textContent = "Ready to crush today's session?";
+  } else {
+    if (chip) chip.hidden = true;
+    updateGreeting();
+    if (subtitleEl) subtitleEl.textContent = "Ready for today's session?";
+  }
+}
+
+// Render the 5 most recent workout sessions
+function renderRecentWorkouts(history) {
+  const list = $("recent-workouts-list");
+  const zero = $("recent-workouts-zero");
+  if (!list) return;
+
+  if (!history || history.length === 0) {
+    list.innerHTML = "";
+    if (zero) zero.hidden = false;
+    return;
+  }
+  if (zero) zero.hidden = true;
+
+  const recent = history.slice(0, 5);
+  list.innerHTML = "";
+  for (const s of recent) {
+    const row = document.createElement("div");
+    row.className = "recent-item";
+
+    const dot = document.createElement("div");
+    dot.className = "recent-dot";
+
+    const info = document.createElement("div");
+    info.className = "recent-info";
+
+    const name = document.createElement("div");
+    name.className = "recent-name";
+    name.textContent = s.exerciseName || s.exerciseId || "Workout";
+
+    const meta = document.createElement("div");
+    meta.className = "recent-meta";
+    const d = new Date(s.timestamp || Date.now());
+    const dateStr = d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+    const durMins = Math.max(1, Math.round((s.durationSeconds || 60) / 60));
+    meta.textContent = `${dateStr} · ${durMins} min`;
+
+    info.appendChild(name);
+    info.appendChild(meta);
+
+    const val = document.createElement("div");
+    val.className = "recent-val";
+    if (s.holdSeconds != null) {
+      val.textContent = `${s.holdSeconds}s`;
+    } else if (s.reps != null) {
+      val.textContent = `${s.reps} reps`;
+    }
+
+    row.appendChild(dot);
+    row.appendChild(info);
+    row.appendChild(val);
+    list.appendChild(row);
+  }
+}
+
+// Apply zero states for empty data sections
+function applyZeroStates(history) {
+  const hasData = history && history.length > 0;
+  const heatmapZero = $("heatmap-zero");
+  const heatmapWrapper = $("heatmap-wrapper-actual");
+  const chartZero = $("chart-zero");
+  const chartContainer = $("chart-container-actual");
+
+  if (heatmapZero) heatmapZero.hidden = hasData;
+  if (heatmapWrapper) heatmapWrapper.hidden = !hasData;
+  if (chartZero) chartZero.hidden = hasData;
+  if (chartContainer) chartContainer.hidden = !hasData;
+}
+
+// ---------------------------------------------------------------------------
+// Splash screen + onboarding flow
+function runSplash() {
+  setTimeout(() => {
+    const splash = $("screen-splash");
+    if (splash) {
+      splash.style.transition = "opacity 0.45s ease";
+      splash.style.opacity = "0";
+      splash.style.pointerEvents = "none";
+      setTimeout(() => {
+        splash.classList.remove("active");
+        const profile = loadProfile();
+        if (!profile) {
+          show("onboarding");
+        } else {
+          show("picker");
+          switchTab("workouts");
+        }
+      }, 450);
+    }
+  }, 1600);
+}
+
+function initOnboarding() {
+  let selectedGoal = null;
+  const stepDots = document.querySelectorAll(".onb-step-dot");
+
+  function setStep(n) {
+    const s1 = $("onb-step-1");
+    const s2 = $("onb-step-2");
+    if (n === 1) {
+      if (s1) s1.hidden = false;
+      if (s2) s2.hidden = true;
+    } else {
+      if (s1) s1.hidden = true;
+      if (s2) s2.hidden = false;
+    }
+    stepDots.forEach((d, i) => {
+      d.classList.remove("active", "done");
+      if (i < n - 1) d.classList.add("done");
+      else if (i === n - 1) d.classList.add("active");
+    });
+  }
+
+  const nextBtn = $("onb-next");
+  if (nextBtn) {
+    nextBtn.addEventListener("click", () => {
+      const nameVal = ($("onb-name") || {}).value?.trim();
+      if (!nameVal) {
+        const inp = $("onb-name");
+        if (inp) {
+          inp.style.borderColor = "var(--danger)";
+          inp.focus();
+          setTimeout(() => { inp.style.borderColor = ""; }, 1500);
+        }
+        return;
+      }
+      setStep(2);
+    });
+  }
+
+  const goalChips = document.querySelectorAll(".goal-chip");
+  goalChips.forEach(chip => {
+    chip.addEventListener("click", () => {
+      goalChips.forEach(c => c.classList.remove("selected"));
+      chip.classList.add("selected");
+      selectedGoal = chip.dataset.goal;
+    });
+  });
+
+  function finishOnboarding() {
+    const nameVal = ($("onb-name") || {}).value?.trim() || "";
+    const ageVal = parseInt(($("onb-age") || {}).value) || null;
+    const weightVal = parseFloat(($("onb-weight") || {}).value) || null;
+    const heightVal = parseInt(($("onb-height") || {}).value) || null;
+    const profile = {
+      name: nameVal,
+      age: ageVal,
+      weightKg: weightVal,
+      heightCm: heightVal,
+      fitnessGoal: selectedGoal || "general",
+      createdAt: Date.now(),
+    };
+    saveProfile(profile);
+    show("picker");
+    switchTab("workouts");
+    refreshDashboard();
+  }
+
+  const finishBtn = $("onb-finish");
+  if (finishBtn) finishBtn.addEventListener("click", finishOnboarding);
+
+  function skipOnboarding() {
+    const nameVal = ($("onb-name") || {}).value?.trim() || "";
+    const profile = { name: nameVal, fitnessGoal: selectedGoal || null, createdAt: Date.now() };
+    saveProfile(profile);
+    show("picker");
+    switchTab("workouts");
+    refreshDashboard();
+  }
+
+  const skip1 = $("onb-skip-1");
+  if (skip1) skip1.addEventListener("click", skipOnboarding);
+  const skip2 = $("onb-skip-2");
+  if (skip2) skip2.addEventListener("click", skipOnboarding);
 }
 
 function saveCurrentSession() {
@@ -1871,7 +2101,10 @@ if (navWorkoutsBtn) {
   navWorkoutsBtn.addEventListener("click", () => switchTab("workouts"));
 }
 
-// Initialize dashboard & greeting on app startup
+// Initialize: run splash screen, then onboarding (first time) or workouts
+initOnboarding();
+runSplash();
+// Pre-populate dashboard data so it's ready when user navigates there
 refreshDashboard();
 
 const skipBtn = $("btn-skip-countdown");
