@@ -523,7 +523,7 @@ function runSplash() {
         show("onboarding");
       } else {
         show("picker");
-        switchTab("workouts");
+        switchTab("dashboard");
       }
     }, 400);
   }, 1100);
@@ -591,7 +591,7 @@ function initOnboarding() {
     };
     saveProfile(profile);
     show("picker");
-    switchTab("workouts");
+    switchTab("dashboard");
     refreshDashboard();
   }
 
@@ -603,7 +603,7 @@ function initOnboarding() {
     const profile = { name: nameVal, fitnessGoal: selectedGoal || null, createdAt: Date.now() };
     saveProfile(profile);
     show("picker");
-    switchTab("workouts");
+    switchTab("dashboard");
     refreshDashboard();
   }
 
