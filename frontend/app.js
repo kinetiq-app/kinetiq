@@ -106,8 +106,16 @@ const BACKOFF_MAX_MS = 8000;
 // ---------------------------------------------------------------------------
 // screens & navigation
 function show(name) {
-  for (const s of Object.values(screens)) s.classList.remove("active");
-  screens[name].classList.add("active");
+  for (const s of Object.values(screens)) {
+    if (!s) continue;
+    s.classList.remove("active");
+    s.style.display = "none";
+  }
+  const target = screens[name];
+  if (target) {
+    target.classList.add("active");
+    target.style.display = "flex";
+  }
   if (name === "live") document.title = "Live — Kinetiq";
   else if (name === "summary") document.title = "Summary — Kinetiq";
   else if (name === "picker") document.title = "Workouts — Kinetiq";
@@ -495,15 +503,21 @@ function applyZeroStates(history) {
 // ---------------------------------------------------------------------------
 // Splash screen + onboarding flow
 function runSplash() {
-  // After 1.4s, add .exiting to trigger zoom-fade-out CSS animation
+  const splash = $("screen-splash");
+  if (!splash) return;
+
+  const logoCenter = splash.querySelector(".splash-center");
+  if (logoCenter) logoCenter.classList.remove("exiting");
+  splash.classList.add("active");
+  splash.style.display = "flex";
+
+  // After 1100ms zoom-in hold, play zoom-fade-out exit
   setTimeout(() => {
-    const splash = $("screen-splash");
-    if (!splash) return;
-    const logoCenter = splash.querySelector(".splash-center");
     if (logoCenter) logoCenter.classList.add("exiting");
-    // After animation completes (0.5s), swap screens
+    // After 400ms exit completes, hide splash and show main app
     setTimeout(() => {
       splash.classList.remove("active");
+      splash.style.display = "none";
       const profile = loadProfile();
       if (!profile) {
         show("onboarding");
@@ -511,8 +525,8 @@ function runSplash() {
         show("picker");
         switchTab("workouts");
       }
-    }, 500);
-  }, 1400);
+    }, 400);
+  }, 1100);
 }
 
 function initOnboarding() {
@@ -2133,8 +2147,15 @@ wakeApi().catch(() => {});
 // cache-first worker could keep serving a stale app.js/config.js indefinitely --
 // which is precisely how a deployed API URL fix stayed invisible for days.
 if ("serviceWorker" in navigator) {
+  let hadPreviousController = !!navigator.serviceWorker.controller;
   let reloadedForUpdate = false;
   navigator.serviceWorker.addEventListener("controllerchange", () => {
+    // If there was no controller when the page loaded, this is the first install claiming the page.
+    // Do NOT reload — reloading here causes the splash screen to play a second time!
+    if (!hadPreviousController) {
+      hadPreviousController = true;
+      return;
+    }
     if (reloadedForUpdate || running || isStartingSet) return;
     reloadedForUpdate = true;
     window.location.reload();

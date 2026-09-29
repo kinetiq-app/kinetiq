@@ -76,12 +76,16 @@ body { overflow: hidden; }
   inset: 0;
   z-index: 1000;
   background: var(--bg);
-  display: flex;
+  display: none;
   align-items: center;
   justify-content: center;
   max-width: 100%;
+  pointer-events: none;
 }
-#screen-splash.active { display: flex; }
+#screen-splash.active {
+  display: flex;
+  pointer-events: auto;
+}
 
 .splash-center {
   display: flex;
