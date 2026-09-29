@@ -6,36 +6,32 @@
   <meta name="theme-color" content="#0a0a0f" />
   <title>Kinetiq</title>
   <link rel="manifest" href="manifest.json" />
-  <link rel="stylesheet" href="styles.css?v=6.0.0" />
+  <link rel="stylesheet" href="styles.css?v=6.1.0" />
 </head>
 <body>
 
   <!-- ============ SPLASH SCREEN ============ -->
   <section id="screen-splash" class="screen active">
-    <div class="splash-logo">
+    <div class="splash-center">
       <img
         src="kinetiq-logo.jpg"
         alt="Kinetiq"
         class="splash-logo-img"
         onerror="this.style.display='none'"
       />
-      <span class="splash-wordmark">Kinetiq</span>
-      <span class="splash-tagline">Your phone is the trainer</span>
     </div>
   </section>
 
   <!-- ============ ONBOARDING SCREEN ============ -->
   <section id="screen-onboarding" class="screen">
+    <!-- Logo mark at top -->
+    <div class="onb-top-logo">
+      <img src="kinetiq-logo.jpg" alt="Kinetiq" class="onb-logo-img" onerror="this.style.display='none'" />
+    </div>
+
     <div class="onb-header">
-      <div class="onb-logo-badge">
-        <img
-          src="kinetiq-logo.jpg"
-          alt="Kinetiq"
-          onerror="this.style.display='none'"
-        />
-      </div>
       <h1 class="onb-title">Welcome to Kinetiq</h1>
-      <p class="onb-subtitle">Let's set up your profile so we can personalize your experience.</p>
+      <p class="onb-subtitle">Set up your profile to get started.</p>
     </div>
 
     <!-- Step dots -->
@@ -47,56 +43,25 @@
     <!-- Step 1: Basic Info -->
     <div id="onb-step-1" class="onb-form">
       <div class="field-group">
-        <label class="field-label" for="onb-name">Your Name</label>
-        <input
-          class="field-input"
-          id="onb-name"
-          type="text"
-          placeholder="E.g. Alex"
-          autocomplete="given-name"
-          inputmode="text"
-        />
+        <label class="field-label" for="onb-name">Name</label>
+        <input class="field-input" id="onb-name" type="text" placeholder="Your name" autocomplete="given-name" inputmode="text" />
       </div>
       <div class="field-row">
         <div class="field-group">
           <label class="field-label" for="onb-age">Age</label>
-          <input
-            class="field-input"
-            id="onb-age"
-            type="number"
-            placeholder="25"
-            min="10"
-            max="100"
-            inputmode="numeric"
-          />
+          <input class="field-input" id="onb-age" type="number" placeholder="25" min="10" max="100" inputmode="numeric" />
         </div>
         <div class="field-group">
           <label class="field-label" for="onb-weight">Weight (kg)</label>
-          <input
-            class="field-input"
-            id="onb-weight"
-            type="number"
-            placeholder="70"
-            min="20"
-            max="300"
-            inputmode="decimal"
-          />
+          <input class="field-input" id="onb-weight" type="number" placeholder="70" min="20" max="300" inputmode="decimal" />
         </div>
       </div>
       <div class="field-group">
         <label class="field-label" for="onb-height">Height (cm)</label>
-        <input
-          class="field-input"
-          id="onb-height"
-          type="number"
-          placeholder="175"
-          min="100"
-          max="250"
-          inputmode="numeric"
-        />
+        <input class="field-input" id="onb-height" type="number" placeholder="175" min="100" max="250" inputmode="numeric" />
       </div>
-      <button class="onb-cta" id="onb-next">Continue →</button>
-      <button class="onb-skip" id="onb-skip-1">Skip for now</button>
+      <button class="onb-cta" id="onb-next">Continue</button>
+      <button class="onb-skip" id="onb-skip-1">Skip</button>
     </div>
 
     <!-- Step 2: Fitness Goal -->
@@ -105,25 +70,21 @@
         <label class="field-label">Fitness Goal</label>
         <div class="goal-chips">
           <button class="goal-chip" data-goal="weight_loss">
-            <span class="goal-chip-icon">🔥</span>
             <span class="goal-chip-label">Weight Loss</span>
           </button>
           <button class="goal-chip" data-goal="strength">
-            <span class="goal-chip-icon">💪</span>
             <span class="goal-chip-label">Strength</span>
           </button>
           <button class="goal-chip" data-goal="endurance">
-            <span class="goal-chip-icon">⚡</span>
             <span class="goal-chip-label">Endurance</span>
           </button>
           <button class="goal-chip" data-goal="general">
-            <span class="goal-chip-icon">🎯</span>
             <span class="goal-chip-label">General Fitness</span>
           </button>
         </div>
       </div>
       <button class="onb-cta" id="onb-finish">Get Started</button>
-      <button class="onb-skip" id="onb-skip-2">Skip for now</button>
+      <button class="onb-skip" id="onb-skip-2">Skip</button>
     </div>
   </section>
 
@@ -133,17 +94,16 @@
     <!-- Tab 1: Dashboard -->
     <div id="tab-dashboard" class="tab-panel" hidden>
 
-      <!-- User avatar (top-right, shown if profile exists) -->
-      <div id="dash-user-chip" class="dash-user-chip" hidden>
-        <div class="dash-avatar" id="dash-avatar-initials">A</div>
-        <span class="dash-user-name" id="dash-user-name-label">Alex</span>
+      <!-- Top bar: logo left, avatar right -->
+      <div class="dash-topbar">
+        <img src="kinetiq-logo.jpg" alt="Kinetiq" class="dash-logo-mark" onerror="this.style.display='none'" />
+        <div id="dash-user-chip" class="dash-avatar" hidden>
+          <span id="dash-avatar-initials">A</span>
+        </div>
       </div>
 
-      <!-- Brand + Greeting -->
-      <div class="dash-brand-bar">
-        <h1 class="dash-brand-title">Kinetiq</h1>
-      </div>
-      <header class="app-header dash-header">
+      <!-- Greeting -->
+      <header class="dash-header">
         <h2 id="dash-greeting" class="dash-greeting">Good evening</h2>
         <p class="dash-subtitle" id="dash-subtitle-text">Ready for today's session?</p>
       </header>
@@ -168,7 +128,7 @@
       <div class="dash-card">
         <div class="dash-card-header">
           <div>
-            <h2 class="dash-card-title">Monthly Activity</h2>
+            <h2 class="dash-card-title">Activity</h2>
             <span id="heatmap-month-label" class="dash-card-sub">This Month</span>
           </div>
           <div class="heatmap-legend">
@@ -180,18 +140,14 @@
             <span class="legend-text">More</span>
           </div>
         </div>
-        <!-- Zero state for heatmap -->
         <div id="heatmap-zero" class="zero-state" hidden>
-          <span class="zero-icon">📅</span>
           <span class="zero-text">Complete your first workout to start tracking activity</span>
         </div>
         <div class="heatmap-wrapper" id="heatmap-wrapper-actual">
           <div class="heatmap-day-labels">
             <span>M</span><span>T</span><span>W</span><span>T</span><span>F</span><span>S</span><span>S</span>
           </div>
-          <div id="heatmap-grid" class="heatmap-grid">
-            <!-- Populated by JS -->
-          </div>
+          <div id="heatmap-grid" class="heatmap-grid"></div>
         </div>
       </div>
 
@@ -199,27 +155,25 @@
       <div class="dash-card">
         <div class="dash-card-header">
           <div>
-            <h2 class="dash-card-title">Weekly Minutes</h2>
+            <h2 class="dash-card-title">This Week</h2>
             <span id="chart-week-label" class="dash-card-sub">Mon – Sun</span>
           </div>
           <span id="weekly-total-badge" class="dash-badge">0 mins</span>
         </div>
-        <!-- Zero state for chart -->
         <div id="chart-zero" class="zero-state" hidden>
-          <span class="zero-icon">📈</span>
-          <span class="zero-text">Your workout minutes will appear here after your first session</span>
+          <span class="zero-text">Workout minutes will appear after your first session</span>
         </div>
         <div class="chart-container" id="chart-container-actual">
           <svg id="weekly-chart" viewBox="0 0 320 100" preserveAspectRatio="none" class="weekly-svg">
             <defs>
               <linearGradient id="chartGradient" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stop-color="#34d399" stop-opacity="0.3" />
-                <stop offset="100%" stop-color="#34d399" stop-opacity="0.0" />
+                <stop offset="0%" stop-color="#7c6ff7" stop-opacity="0.25" />
+                <stop offset="100%" stop-color="#7c6ff7" stop-opacity="0.0" />
               </linearGradient>
             </defs>
             <line x1="0" y1="20" x2="320" y2="20" stroke="rgba(255,255,255,0.04)" stroke-dasharray="2,3" />
             <line x1="0" y1="55" x2="320" y2="55" stroke="rgba(255,255,255,0.04)" stroke-dasharray="2,3" />
-            <line x1="0" y1="85" x2="320" y2="85" stroke="rgba(255,255,255,0.06)" />
+            <line x1="0" y1="85" x2="320" y2="85" stroke="rgba(255,255,255,0.05)" />
             <path id="chart-area" class="chart-area" d="M 20 85 L 300 85 Z" fill="url(#chartGradient)"></path>
             <path id="chart-line" class="chart-line" d="M 20 85 L 300 85"></path>
             <g id="chart-points"></g>
@@ -230,125 +184,84 @@
         </div>
       </div>
 
-      <!-- Recent Workouts -->
+      <!-- Recent Sessions -->
       <div class="dash-card" id="recent-workouts-card">
         <div class="dash-card-header">
-          <div>
-            <h2 class="dash-card-title">Recent Sessions</h2>
-          </div>
+          <h2 class="dash-card-title">Recent Sessions</h2>
         </div>
-        <div id="recent-workouts-list" class="recent-list">
-          <!-- Populated by JS -->
-        </div>
+        <div id="recent-workouts-list" class="recent-list"></div>
         <div id="recent-workouts-zero" class="zero-state" hidden>
-          <span class="zero-icon">🏋️</span>
-          <span class="zero-text">No workouts yet — head to Workouts and start your first set</span>
+          <span class="zero-text">No workouts yet — start your first set</span>
         </div>
       </div>
     </div>
 
     <!-- Tab 2: Workouts -->
     <div id="tab-workouts" class="tab-panel active">
+      <!-- Logo mark at top -->
+      <div class="workouts-topbar">
+        <img src="kinetiq-logo.jpg" alt="Kinetiq" class="dash-logo-mark" onerror="this.style.display='none'" />
+      </div>
+
       <header class="app-header">
-        <div class="app-header-top">
-          <h1 class="wordmark">Workouts</h1>
-          <div class="privacy-pill">
-            <span class="privacy-dot"></span>
-            <span>On-device</span>
-          </div>
-        </div>
-        <p class="tagline">Your phone is the trainer. Pixels never leave this device.</p>
+        <h1 class="wordmark">Workouts</h1>
+        <p class="tagline">On-device AI coaching — no data leaves your phone.</p>
       </header>
 
-      <div class="pick-header-row">
-        <p class="pick-label">Choose an exercise</p>
-        <span class="curated-pill">5 movements</span>
-      </div>
+      <div class="exercise-section-label">Exercises</div>
 
       <div class="exercise-grid">
         <!-- Squat -->
         <button class="exercise-card" data-exercise="squat">
           <div class="ex-content">
-            <div class="ex-title-row">
-              <span class="ex-name">Squat</span>
-              <span class="ex-type-pill">REPS</span>
-            </div>
-            <span class="ex-target">Quads · Glutes</span>
-            <span class="ex-sub">side or front view</span>
+            <span class="ex-name">Squat</span>
+            <span class="ex-meta">Quads · Glutes</span>
           </div>
-          <div class="ex-action">
-            <svg class="chevron-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"></polyline></svg>
-          </div>
+          <svg class="chevron-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"></polyline></svg>
         </button>
 
         <!-- Push-up -->
         <button class="exercise-card" data-exercise="pushup">
           <div class="ex-content">
-            <div class="ex-title-row">
-              <span class="ex-name">Push-up</span>
-              <span class="ex-type-pill">REPS</span>
-            </div>
-            <span class="ex-target">Chest · Triceps · Core</span>
-            <span class="ex-sub">side view, phone low</span>
+            <span class="ex-name">Push-up</span>
+            <span class="ex-meta">Chest · Triceps · Core</span>
           </div>
-          <div class="ex-action">
-            <svg class="chevron-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"></polyline></svg>
-          </div>
+          <svg class="chevron-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"></polyline></svg>
         </button>
 
         <!-- Lunge -->
         <button class="exercise-card" data-exercise="lunge">
           <div class="ex-content">
-            <div class="ex-title-row">
-              <span class="ex-name">Lunge</span>
-              <span class="ex-type-pill">REPS</span>
-            </div>
-            <span class="ex-target">Quads · Hamstrings</span>
-            <span class="ex-sub">side view</span>
+            <span class="ex-name">Lunge</span>
+            <span class="ex-meta">Quads · Hamstrings</span>
           </div>
-          <div class="ex-action">
-            <svg class="chevron-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"></polyline></svg>
-          </div>
+          <svg class="chevron-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"></polyline></svg>
         </button>
 
         <!-- Bicep Curl -->
         <button class="exercise-card" data-exercise="bicep_curl">
           <div class="ex-content">
-            <div class="ex-title-row">
-              <span class="ex-name">Bicep Curl</span>
-              <span class="ex-type-pill">REPS</span>
-            </div>
-            <span class="ex-target">Biceps · Forearms</span>
-            <span class="ex-sub">side or front view, arms in frame</span>
+            <span class="ex-name">Bicep Curl</span>
+            <span class="ex-meta">Biceps · Forearms</span>
           </div>
-          <div class="ex-action">
-            <svg class="chevron-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"></polyline></svg>
-          </div>
+          <svg class="chevron-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"></polyline></svg>
         </button>
 
-        <!-- Plank (hold) -->
+        <!-- Plank -->
         <button class="exercise-card" data-exercise="plank">
           <div class="ex-content">
-            <div class="ex-title-row">
-              <span class="ex-name">Plank (hold)</span>
-              <span class="ex-type-pill hold-pill">HOLD</span>
-            </div>
-            <span class="ex-target">Core · Shoulders</span>
-            <span class="ex-sub">side view, phone on floor</span>
+            <span class="ex-name">Plank</span>
+            <span class="ex-meta">Core · Shoulders · Hold</span>
           </div>
-          <div class="ex-action">
-            <svg class="chevron-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"></polyline></svg>
-          </div>
+          <svg class="chevron-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"></polyline></svg>
         </button>
       </div>
-
-      <p class="note">All 5 exercises run 100% on-device vision in browser.</p>
     </div>
 
     <!-- Bottom Navigation Bar -->
     <nav id="bottom-nav" class="bottom-nav" aria-label="Main Navigation">
       <button id="nav-btn-dashboard" class="nav-tab" type="button" data-tab="dashboard">
-        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75">
           <rect x="3" y="3" width="7" height="9" rx="1.5"></rect>
           <rect x="14" y="3" width="7" height="5" rx="1.5"></rect>
           <rect x="14" y="12" width="7" height="9" rx="1.5"></rect>
@@ -357,7 +270,7 @@
         <span class="nav-label">Dashboard</span>
       </button>
       <button id="nav-btn-workouts" class="nav-tab active" type="button" data-tab="workouts">
-        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75">
           <path d="M6 5v14M18 5v14M2 9v6M22 9v6M6 12h12"></path>
         </svg>
         <span class="nav-label">Workouts</span>
@@ -375,12 +288,12 @@
       <div class="hud-top">
         <button id="btn-back" class="ghost-btn" aria-label="Back">&#8592;</button>
         <span id="hud-exercise" class="hud-exercise">—</span>
-        <span id="hud-lock" class="lock-pill lock-unknown">locating you…</span>
+        <span id="hud-lock" class="lock-pill lock-unknown">locating…</span>
       </div>
 
       <!-- positioning guidance pill -->
       <div id="hud-guide" class="hud-guide" hidden>
-        <span id="guide-icon" class="guide-icon">📱</span>
+        <span id="guide-icon" class="guide-icon"></span>
         <span id="guide-text" class="guide-text">Set phone down &amp; step back</span>
       </div>
 
@@ -404,14 +317,14 @@
       <div id="state-overlay" class="state-overlay" hidden>
         <div class="state-card">
           <button id="state-dismiss" class="ghost-btn state-dismiss" hidden aria-label="Dismiss">&times;</button>
-          <div id="state-title" class="state-title">Loading…</div>
+          <div id="state-title" class="state-title">Loading</div>
           <div id="state-msg" class="state-msg"></div>
           <button id="state-action" class="primary-btn" hidden></button>
         </div>
       </div>
     </div>
 
-    <!-- divided bottom controls: reps count on left, end set button on right -->
+    <!-- bottom controls: reps on left, end set on right -->
     <div class="controls live-controls">
       <div class="rep-card">
         <div class="rep-card-main">
@@ -439,7 +352,6 @@
       <div id="sum-flags" class="summary-flaglist"></div>
       <div id="sum-cue" class="summary-cue"></div>
     </div>
-    <!-- Dual action buttons -->
     <div class="controls summary-controls">
       <button id="btn-sum-dashboard" class="primary-btn">View on Dashboard</button>
       <button id="btn-sum-workouts" class="secondary-btn">Next Exercise</button>
@@ -447,6 +359,6 @@
   </section>
 
   <script src="config.js"></script>
-  <script type="module" src="app.js?v=6.0.0"></script>
+  <script type="module" src="app.js?v=6.1.0"></script>
 </body>
 </html>

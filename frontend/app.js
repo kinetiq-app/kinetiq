@@ -495,24 +495,24 @@ function applyZeroStates(history) {
 // ---------------------------------------------------------------------------
 // Splash screen + onboarding flow
 function runSplash() {
+  // After 1.4s, add .exiting to trigger zoom-fade-out CSS animation
   setTimeout(() => {
     const splash = $("screen-splash");
-    if (splash) {
-      splash.style.transition = "opacity 0.45s ease";
-      splash.style.opacity = "0";
-      splash.style.pointerEvents = "none";
-      setTimeout(() => {
-        splash.classList.remove("active");
-        const profile = loadProfile();
-        if (!profile) {
-          show("onboarding");
-        } else {
-          show("picker");
-          switchTab("workouts");
-        }
-      }, 450);
-    }
-  }, 1600);
+    if (!splash) return;
+    const logoCenter = splash.querySelector(".splash-center");
+    if (logoCenter) logoCenter.classList.add("exiting");
+    // After animation completes (0.5s), swap screens
+    setTimeout(() => {
+      splash.classList.remove("active");
+      const profile = loadProfile();
+      if (!profile) {
+        show("onboarding");
+      } else {
+        show("picker");
+        switchTab("workouts");
+      }
+    }, 500);
+  }, 1400);
 }
 
 function initOnboarding() {
@@ -1176,7 +1176,7 @@ function showGuidePill(text, isReady = false, icon = null) {
   if (!el) return;
   const iconEl = $("guide-icon");
   const textEl = $("guide-text");
-  if (iconEl) iconEl.textContent = icon || (isReady ? "✓" : "📱");
+  if (iconEl) iconEl.textContent = icon || "";
   if (textEl) textEl.textContent = text;
   el.className = "hud-guide" + (isReady ? " ready" : "");
   el.hidden = false;
@@ -1196,7 +1196,7 @@ function startCountdown() {
   const numEl = $("countdown-num");
   const msgEl = $("countdown-msg");
 
-  showGuidePill("In position! Hold still...", true, "✓");
+  showGuidePill("In position — hold still...", true, "");
 
   countdownEl.hidden = false;
   numEl.textContent = "3";
