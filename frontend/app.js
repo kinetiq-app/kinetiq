@@ -660,12 +660,19 @@ function saveCurrentSession() {
     console.warn("Failed to save current session:", err);
   }
 }
-function setState(title, msg, actionLabel, actionFn, allowDismiss = false) {
+function setState(title, msg, actionLabel, actionFn, allowDismiss = false, secondaryLabel = null, secondaryFn = null) {
   $("state-title").textContent = title;
-  $("state-msg").textContent = msg || "";
+  const msgEl = $("state-msg");
+  if (typeof msg === "string") {
+    msgEl.innerHTML = msg;
+  } else {
+    msgEl.textContent = "";
+    if (msg) msgEl.appendChild(msg);
+  }
   const btn = $("state-action");
   if (actionLabel) {
     btn.textContent = actionLabel;
+    btn.disabled = false;
     btn.hidden = false;
     btn.style.display = "";
     btn.onclick = actionFn;
@@ -673,12 +680,28 @@ function setState(title, msg, actionLabel, actionFn, allowDismiss = false) {
     btn.hidden = true;
     btn.style.display = "none";
   }
+  const secBtn = $("state-secondary");
+  if (secBtn) {
+    if (secondaryLabel) {
+      secBtn.textContent = secondaryLabel;
+      secBtn.disabled = false;
+      secBtn.hidden = false;
+      secBtn.style.display = "";
+      secBtn.onclick = secondaryFn;
+    } else {
+      secBtn.hidden = true;
+      secBtn.style.display = "none";
+    }
+  }
   const dismissBtn = $("state-dismiss");
   if (dismissBtn) {
     if (allowDismiss || running) {
       dismissBtn.hidden = false;
       dismissBtn.style.display = "";
-      dismissBtn.onclick = () => clearState();
+      dismissBtn.onclick = () => {
+        clearState();
+        if (allowDismiss && !running) backToPicker();
+      };
     } else {
       dismissBtn.hidden = true;
       dismissBtn.style.display = "none";
@@ -696,6 +719,15 @@ function clearState() {
   if (dismissBtn) {
     dismissBtn.hidden = true;
     dismissBtn.style.display = "none";
+  }
+  const secBtn = $("state-secondary");
+  if (secBtn) {
+    secBtn.hidden = true;
+    secBtn.style.display = "none";
+  }
+  const actionBtn = $("state-action");
+  if (actionBtn) {
+    actionBtn.disabled = false;
   }
 }
 
@@ -737,6 +769,77 @@ async function getCameraPermissionState() {
   }
   return "prompt";
 }
+
+function showCameraBlockedState(ex, isRetryAttempt = false) {
+  const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+  const isAndroid = /Android/.test(navigator.userAgent);
+
+  let instruct = "";
+  if (isIOS) {
+    instruct = `Browsers will not re-prompt after choosing "Don't Allow". To enable camera access:<br><br>
+1. Tap the <strong>aA</strong> (or page settings) icon in the address bar.<br>
+2. Tap <strong>Website Settings</strong>.<br>
+3. Set <strong>Camera</strong> to <strong>Allow</strong>.<br>
+4. Return here and tap <strong>Check Again</strong>.`;
+  } else if (isAndroid) {
+    instruct = `Browsers will not re-prompt after choosing "Don't Allow". To enable camera access:<br><br>
+1. Tap the <strong>lock or settings icon</strong> in the address bar.<br>
+2. Tap <strong>Permissions</strong> → <strong>Camera</strong>.<br>
+3. Select <strong>Allow</strong>.<br>
+4. Return here and tap <strong>Check Again</strong>.`;
+  } else {
+    instruct = `Browsers will not re-prompt after choosing "Don't Allow". To enable camera access:<br><br>
+1. Click the <strong>lock / site settings icon</strong> in your browser address bar.<br>
+2. Toggle <strong>Camera</strong> to <strong>Allow</strong>.<br>
+3. Return here and click <strong>Check Again</strong>.`;
+  }
+
+  if (isRetryAttempt) {
+    instruct = `<div style="background: rgba(251,191,36,0.12); border: 1px solid rgba(251,191,36,0.3); border-radius: 8px; padding: 10px; margin-bottom: 12px; color: var(--warn); font-size: 12px; line-height: 1.4;">
+      Camera is still blocked in browser settings. Please follow the steps below to allow access:
+    </div>` + instruct;
+  }
+
+  // Live listener: if user changes camera permission in browser settings, auto-start!
+  if (navigator.permissions && navigator.permissions.query) {
+    navigator.permissions.query({ name: "camera" }).then((p) => {
+      p.onchange = () => {
+        if (p.state === "granted") {
+          clearState();
+          startSet(ex);
+        }
+      };
+    }).catch(() => {});
+  }
+
+  setState(
+    "Camera Access Blocked",
+    instruct,
+    "Check Again",
+    async () => {
+      const btn = $("state-action");
+      if (btn) {
+        btn.textContent = "Checking…";
+        btn.disabled = true;
+      }
+      try {
+        await startCamera();
+        clearState();
+        startSet(ex);
+      } catch {
+        if (btn) btn.disabled = false;
+        showCameraBlockedState(ex, true);
+      }
+    },
+    true, // allow dismiss
+    "Back to Workouts",
+    () => {
+      clearState();
+      backToPicker();
+    }
+  );
+}
+
 
 let streamIdleTimer = null;
 function scheduleCameraRelease() {
@@ -1884,8 +1987,15 @@ async function startSet(ex) {
     const isStreamActive = stream && stream.active && stream.getVideoTracks().some((t) => t.readyState === "live");
     if (!isStreamActive) {
       const permState = await getCameraPermissionState();
-      if (permState !== "granted") {
-        setState("Camera", "Allow camera access to begin. Video stays on your device.", null, null, true);
+      if (permState === "denied") {
+        showCameraBlockedState(ex);
+        return;
+      }
+      if (permState === "prompt") {
+        setState("Camera Access", "Allow camera access when prompted by your browser. Video never leaves this device.", null, null, true, "Cancel", () => {
+          clearState();
+          backToPicker();
+        });
       }
       await startCamera();
       clearState();
@@ -1908,12 +2018,7 @@ async function startSet(ex) {
     postTimer = setInterval(flush, CFG.POST_INTERVAL_MS);
   } catch (err) {
     if (err && (err.name === "NotAllowedError" || err.name === "SecurityError")) {
-      setState(
-        "Camera blocked",
-        "Kinetiq needs the camera to see your form. Enable it in your browser settings, then retry.",
-        "Retry",
-        () => startSet(ex)
-      );
+      showCameraBlockedState(ex);
     } else {
       setState("Couldn't start", String(err.message || err), "Back", backToPicker);
     }

@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#0a0a0f" />
   <title>Kinetiq</title>
   <link rel="manifest" href="manifest.json" />
-  <link rel="stylesheet" href="styles.css?v=6.1.4" />
+  <link rel="stylesheet" href="styles.css?v=6.1.5" />
 </head>
 <body>
 
@@ -319,7 +319,10 @@
           <button id="state-dismiss" class="ghost-btn state-dismiss" hidden aria-label="Dismiss">&times;</button>
           <div id="state-title" class="state-title">Loading</div>
           <div id="state-msg" class="state-msg"></div>
-          <button id="state-action" class="primary-btn" hidden></button>
+          <div class="state-actions">
+            <button id="state-action" class="primary-btn" hidden></button>
+            <button id="state-secondary" class="secondary-btn" hidden></button>
+          </div>
         </div>
       </div>
     </div>
@@ -359,6 +362,6 @@
   </section>
 
   <script src="config.js"></script>
-  <script type="module" src="app.js?v=6.1.4"></script>
+  <script type="module" src="app.js?v=6.1.5"></script>
 </body>
 </html>
