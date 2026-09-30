@@ -46,12 +46,64 @@
 *, *::before, *::after { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
 [hidden] { display: none !important; }
 
+/* ==========================================================================
+   Typography — F37 Foundry "Phantom"
+   Bespoke typeface designed by F37 Foundry (Manchester, UK) for Phantom
+   ========================================================================== */
+@font-face {
+  font-family: "Phantom";
+  font-style: normal;
+  font-weight: 300;
+  font-display: swap;
+  src: url("./fonts/Phantom-Book.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "Phantom";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("./fonts/Phantom-Regular.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "Phantom";
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("./fonts/Phantom-Medium.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "Phantom";
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url("./fonts/Phantom-Medium.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "Phantom";
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("./fonts/Phantom-Bold.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "Phantom";
+  font-style: normal;
+  font-weight: 800;
+  font-display: swap;
+  src: url("./fonts/Phantom-Bold.woff2") format("woff2");
+}
+
 html, body {
   margin: 0;
   height: 100%;
   background: var(--bg);
   color: var(--text);
-  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI Variable", "Inter", system-ui, sans-serif;
+  font-family: "Phantom", -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI Variable", "Inter", system-ui, sans-serif;
   -webkit-font-smoothing: antialiased;
 }
 body { overflow: hidden; }
