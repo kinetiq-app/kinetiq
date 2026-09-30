@@ -1,0 +1,13 @@
+{
+  "name": "kinetiq",
+  "version": "5.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "deploy": "wrangler deploy",
+    "test": "npm --prefix frontend test"
+  },
+  "devDependencies": {
+    "wrangler": "^4.145.0"
+  }
+}
