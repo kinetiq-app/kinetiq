@@ -1059,6 +1059,13 @@ body { overflow: hidden; }
   font-family: inherit;
 }
 .profile-save-btn:active { opacity: 0.8; transform: scale(0.97); }
+.profile-save-btn:disabled {
+  background: var(--surface-raised);
+  color: var(--muted);
+  cursor: default;
+  opacity: 1;
+  transform: none;
+}
 
 .profile-body {
   flex: 1;

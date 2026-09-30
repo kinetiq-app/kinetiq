@@ -2579,18 +2579,56 @@ function openProfileScreen() {
 
   show("profile");
 
-  // Chip click — update selection and live-update avatar preview
+  // ── Dirty tracking ──────────────────────────────────────────
+  // Snapshot the state as it was when the screen opened.
+  const snapshot = {
+    name: profile.name || "",
+    age: String(profile.age || ""),
+    weightKg: String(profile.weightKg || ""),
+    heightCm: String(profile.heightCm || ""),
+    fitnessGoal: profile.fitnessGoal || "general",
+  };
+
+  const saveBtn = $("btn-profile-save");
+
+  function isDirty() {
+    const selectedChip = document.querySelector("#profile-goal-chips .goal-chip.selected");
+    return (
+      (nameEl ? nameEl.value : "") !== snapshot.name ||
+      (ageEl ? ageEl.value : "") !== snapshot.age ||
+      (weightEl ? weightEl.value : "") !== snapshot.weightKg ||
+      (heightEl ? heightEl.value : "") !== snapshot.heightCm ||
+      (selectedChip ? selectedChip.dataset.goal : "general") !== snapshot.fitnessGoal
+    );
+  }
+
+  function refreshSaveBtn() {
+    if (!saveBtn) return;
+    const dirty = isDirty();
+    saveBtn.disabled = !dirty;
+  }
+
+  // Start disabled — no changes yet
+  if (saveBtn) saveBtn.disabled = true;
+
+  // Wire change detection to all form inputs
+  [nameEl, ageEl, weightEl, heightEl].forEach((el) => {
+    if (!el) return;
+    el.oninput = () => {
+      updateProfileAvatarPreview();
+      refreshSaveBtn();
+    };
+  });
+
+  // Chip click — update selection, live-update avatar preview, check dirty
   chips.forEach((c) => {
     c.onclick = () => {
       chips.forEach((x) => x.classList.remove("selected"));
       c.classList.add("selected");
+      updateProfileAvatarPreview();
+      refreshSaveBtn();
     };
   });
-
-  // Live-update avatar on name input
-  if (nameEl) {
-    nameEl.oninput = () => updateProfileAvatarPreview();
-  }
 }
 
 function updateProfileAvatarPreview() {
@@ -2616,6 +2654,9 @@ function updateProfileAvatarPreview() {
 }
 
 function saveProfileFromScreen() {
+  const saveBtn = $("btn-profile-save");
+  if (saveBtn && saveBtn.disabled) return; // guard — shouldn't reach here but be safe
+
   const nameEl = $("profile-name");
   const name = nameEl ? nameEl.value.trim() : "";
 
@@ -2635,19 +2676,19 @@ function saveProfileFromScreen() {
   saveProfile(profile);
   refreshDashboard();
 
-  // Animate save button briefly
-  const saveBtn = $("btn-profile-save");
+  // Saved ✓ animation — stays on brand with accent purple, not green
   if (saveBtn) {
+    saveBtn.disabled = true; // re-disable: changes are now saved
     const original = saveBtn.textContent;
     saveBtn.textContent = "Saved ✓";
-    saveBtn.style.background = "var(--good)";
+    // No background override — accent purple is already the button's default color
     setTimeout(() => {
       saveBtn.textContent = original;
-      saveBtn.style.background = "";
     }, 1200);
   }
 
   // Return to dashboard after save
+
   setTimeout(() => {
     show("picker");
     switchTab("dashboard");
