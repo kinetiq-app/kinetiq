@@ -14,7 +14,7 @@
 //
 // CACHE is versioned. Bump it whenever the shell's caching behaviour changes;
 // `activate` deletes every cache that is not the current one.
-const CACHE = "kinetiq-v6-shell-v5";
+const CACHE = "kinetiq-v6-shell-v6";
 
 const SHELL = [
   "./",

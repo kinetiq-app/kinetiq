@@ -90,7 +90,14 @@ let bicepCurlArms = {
 };
 let lastCurlRepMs = 0;
 
-// ---- connection resilience -------------------------------------------------
+// On-device general rep counter state for squats, pushups, lunges (zero-latency, offline resilience)
+let onDeviceReps = 0;
+let exerciseMotionState = {
+  phase: "ready",
+  repStartMs: 0,
+  lastRepMs: 0,
+  minAngle: 180,
+};
 let apiWarm = false;         // has /health answered since page load?
 let sessionMaxFrames = null; // server's per-session frame cap, from /health (null = unknown)
 let tracker = null;          // keeps one visible set continuous across server sessions
@@ -641,7 +648,7 @@ function saveCurrentSession() {
     } else {
       const repsArr = tracker ? tracker.allReps() : (lastResponse && lastResponse.reps) || [];
       const backendTotal = tracker ? tracker.totalReps() : lastResponse ? lastResponse.rep_count : 0;
-      const total = exercise === "bicep_curl" ? Math.max(backendTotal, bicepCurlReps) : backendTotal;
+      const total = exercise === "bicep_curl" ? Math.max(backendTotal, bicepCurlReps) : Math.max(backendTotal, onDeviceReps);
       if (total <= 0) return;
       const flagged = repsArr.filter((x) => x.flags && x.flags.length > 0);
       const clean = repsArr.length - flagged.length;
@@ -1243,6 +1250,165 @@ function evaluateBicepCurlLive(lm, now) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Real-time On-Device Evaluator & Rep Counter for Squats, Pushups, and Lunges
+// Provides zero-latency feedback, immediate audio beeps, and total offline resilience.
+function evaluateOnDeviceMotion(lm, now) {
+  if (!lm || lm.length < 33 || sessionPhase !== "active") return;
+
+  const st = exerciseMotionState;
+  let angle = 180;
+  let repCompleted = false;
+  let phaseText = "READY";
+  let cue = null;
+
+  if (exercise === "squat") {
+    // Knee angles: hip(23/24) - knee(25/26) - ankle(27/28)
+    const lVis = Math.min(lm[23]?.visibility ?? 0, lm[25]?.visibility ?? 0, lm[27]?.visibility ?? 0);
+    const rVis = Math.min(lm[24]?.visibility ?? 0, lm[26]?.visibility ?? 0, lm[28]?.visibility ?? 0);
+    if (lVis < 0.35 && rVis < 0.35) return;
+
+    const lAngle = lVis >= 0.35 ? calcAngleDeg(lm[23], lm[25], lm[27]) : 180;
+    const rAngle = rVis >= 0.35 ? calcAngleDeg(lm[24], lm[26], lm[28]) : 180;
+    angle = Math.min(lAngle, rAngle);
+
+    if (st.phase === "ready") {
+      if (angle < 145) {
+        st.phase = "descending";
+        st.repStartMs = now;
+        st.minAngle = angle;
+      }
+    } else if (st.phase === "descending") {
+      phaseText = "DESCENDING";
+      if (angle < st.minAngle) st.minAngle = angle;
+      if (angle <= 105) {
+        st.phase = "bottom";
+      } else if (angle >= 155) {
+        st.phase = "ready";
+      }
+    } else if (st.phase === "bottom") {
+      phaseText = "SQUAT DEPTH";
+      if (angle < st.minAngle) st.minAngle = angle;
+      if (angle > 115) {
+        st.phase = "ascending";
+      }
+    } else if (st.phase === "ascending") {
+      phaseText = "ASCENDING";
+      if (angle >= 155) {
+        if (now - (st.lastRepMs || 0) > 400 && st.minAngle <= 105) {
+          repCompleted = true;
+          st.lastRepMs = now;
+          onDeviceReps++;
+          cue = "Good depth! Stand tall";
+        }
+        st.phase = "ready";
+        st.minAngle = 180;
+      }
+    }
+  } else if (exercise === "pushup") {
+    // Elbow angles: shoulder(11/12) - elbow(13/14) - wrist(15/16)
+    const lVis = Math.min(lm[11]?.visibility ?? 0, lm[13]?.visibility ?? 0, lm[15]?.visibility ?? 0);
+    const rVis = Math.min(lm[12]?.visibility ?? 0, lm[14]?.visibility ?? 0, lm[16]?.visibility ?? 0);
+    if (lVis < 0.35 && rVis < 0.35) return;
+
+    const lAngle = lVis >= 0.35 ? calcAngleDeg(lm[11], lm[13], lm[15]) : 180;
+    const rAngle = rVis >= 0.35 ? calcAngleDeg(lm[12], lm[14], lm[16]) : 180;
+    angle = Math.min(lAngle, rAngle);
+
+    if (st.phase === "ready") {
+      if (angle < 140) {
+        st.phase = "lowering";
+        st.repStartMs = now;
+        st.minAngle = angle;
+      }
+    } else if (st.phase === "lowering") {
+      phaseText = "LOWERING";
+      if (angle < st.minAngle) st.minAngle = angle;
+      if (angle <= 100) {
+        st.phase = "bottom";
+      } else if (angle >= 150) {
+        st.phase = "ready";
+      }
+    } else if (st.phase === "bottom") {
+      phaseText = "CHEST DOWN";
+      if (angle < st.minAngle) st.minAngle = angle;
+      if (angle > 110) {
+        st.phase = "pushing";
+      }
+    } else if (st.phase === "pushing") {
+      phaseText = "PUSHING UP";
+      if (angle >= 150) {
+        if (now - (st.lastRepMs || 0) > 400 && st.minAngle <= 100) {
+          repCompleted = true;
+          st.lastRepMs = now;
+          onDeviceReps++;
+          cue = "Solid pushup! Full lockout";
+        }
+        st.phase = "ready";
+        st.minAngle = 180;
+      }
+    }
+  } else if (exercise === "lunge") {
+    // Front knee angle: hip(23/24) - knee(25/26) - ankle(27/28)
+    const lVis = Math.min(lm[23]?.visibility ?? 0, lm[25]?.visibility ?? 0, lm[27]?.visibility ?? 0);
+    const rVis = Math.min(lm[24]?.visibility ?? 0, lm[26]?.visibility ?? 0, lm[28]?.visibility ?? 0);
+    if (lVis < 0.35 && rVis < 0.35) return;
+
+    const lAngle = lVis >= 0.35 ? calcAngleDeg(lm[23], lm[25], lm[27]) : 180;
+    const rAngle = rVis >= 0.35 ? calcAngleDeg(lm[24], lm[26], lm[28]) : 180;
+    angle = Math.min(lAngle, rAngle);
+
+    if (st.phase === "ready") {
+      if (angle < 140) {
+        st.phase = "dropping";
+        st.repStartMs = now;
+        st.minAngle = angle;
+      }
+    } else if (st.phase === "dropping") {
+      phaseText = "DROPPING";
+      if (angle < st.minAngle) st.minAngle = angle;
+      if (angle <= 105) {
+        st.phase = "bottom";
+      } else if (angle >= 150) {
+        st.phase = "ready";
+      }
+    } else if (st.phase === "bottom") {
+      phaseText = "LUNGE DEPTH";
+      if (angle < st.minAngle) st.minAngle = angle;
+      if (angle > 115) {
+        st.phase = "rising";
+      }
+    } else if (st.phase === "rising") {
+      phaseText = "RISING";
+      if (angle >= 150) {
+        if (now - (st.lastRepMs || 0) > 400 && st.minAngle <= 105) {
+          repCompleted = true;
+          st.lastRepMs = now;
+          onDeviceReps++;
+          cue = "Great lunge! Push through front foot";
+        }
+        st.phase = "ready";
+        st.minAngle = 180;
+      }
+    }
+  }
+
+  if (repCompleted) {
+    playBeep(880, 0.15);
+    const totalReps = tracker ? Math.max(tracker.totalReps(), onDeviceReps) : onDeviceReps;
+    $("rep-count").textContent = String(totalReps);
+    $("phase").textContent = "REP COMPLETED";
+    $("phase").className = "rep-phase good";
+    if (cue) {
+      $("cue").textContent = cue;
+      $("cue").hidden = false;
+    }
+  } else if (phaseText !== "READY" && !$("phase").textContent.includes("COMPLETED")) {
+    $("phase").textContent = phaseText;
+    $("phase").className = "rep-phase";
+  }
+}
+
 
 // ---------------------------------------------------------------------------
 // temporal exponential moving average (EMA) filter
@@ -1521,14 +1687,18 @@ function loop() {
           }
         } else if (sessionPhase === "active") {
           if (inFrame) {
-            // Send frame to detector
-            frameBuffer.push(buildFrame(lmToUse, now));
+            // Send frame to cloud detector only for cloud-supported exercises (squat, pushup, lunge)
+            if (exercise !== "bicep_curl" && exercise !== "plank") {
+              frameBuffer.push(buildFrame(lmToUse, now));
+            }
             $("hud-lock").className = "lock-pill lock-ok";
             $("hud-lock").textContent = "locked on you";
             hideGuidePill();
 
             if (exercise === "bicep_curl") {
               evaluateBicepCurlLive(lmToUse, now);
+            } else if (exercise !== "plank") {
+              evaluateOnDeviceMotion(lmToUse, now);
             }
           } else {
             // User walked away, phone tilted, or user walking up to phone to end set.
@@ -1659,6 +1829,13 @@ async function flush({ final = false } = {}) {
   if (!running && !final) return;
   if (frameBuffer.length === 0) return;
 
+  // On-device exercises (bicep_curl, plank) run 100% locally and must not POST
+  // to the prototype detector API (which only supports squat, pushup, lunge on Render).
+  if (exercise === "bicep_curl" || exercise === "plank") {
+    frameBuffer = [];
+    return;
+  }
+
   // A cold start can take 30-60s while the post timer keeps firing every 400ms.
   // Without this guard we would stack dozens of concurrent POSTs onto a server
   // that is still booting, and each would carry a different slice of the buffer.
@@ -1734,34 +1911,32 @@ async function flush({ final = false } = {}) {
       return;
     }
 
+    if (err && err.status === 422) {
+      // The backend does not support this exercise or rejected the parameters.
+      // Drop frames rather than retrying indefinitely in a failStreak loop.
+      frameBuffer = [];
+      failStreak = 0;
+      banner(null);
+      return;
+    }
+
     failStreak++;
 
     if (failStreak < HARD_FAIL_AFTER) {
-      // Probably a cold start, not a dead server. Back off and keep recording
-      // instead of blocking the user on an error screen.
+      // Transient delay or cold start. Keep recording and counting on-device.
       const delay = Math.min(1000 * 2 ** (failStreak - 1), BACKOFF_MAX_MS);
       nextAttemptAt = performance.now() + delay;
       banner(
         apiWarm
-          ? "Lost the coach — still recording, will catch up."
-          : "Waking the server — still recording, your reps will catch up."
+          ? "Syncing form analysis…"
+          : "Connecting cloud engine — reps tracked live on device."
       );
     } else {
-      // Sustained failure: now it is worth interrupting.
-      banner(null);
-      setState(
-        "Can't reach the trainer",
-        String(err.message || err),
-        "Retry",
-        async () => {
-          failStreak = 0;
-          nextAttemptAt = 0;
-          clearState();
-          banner("Reconnecting…");
-          const ok = await wakeApi((m) => banner(m));
-          banner(ok ? null : "Still no answer — check your connection.");
-        }
-      );
+      // Sustained cloud outage: do NOT block active workout with a modal!
+      // On-device rep tracking continues seamlessly in real time.
+      const delay = BACKOFF_MAX_MS;
+      nextAttemptAt = performance.now() + delay;
+      banner("Tracking on-device (cloud offline)");
     }
   } finally {
     flushInFlight = false;
@@ -1772,7 +1947,7 @@ async function flush({ final = false } = {}) {
 // render a response
 function render(r) {
   const backendReps = tracker ? tracker.totalReps() : r.rep_count;
-  const displayReps = exercise === "bicep_curl" ? Math.max(backendReps, bicepCurlReps) : backendReps;
+  const displayReps = exercise === "bicep_curl" ? Math.max(backendReps, bicepCurlReps) : Math.max(backendReps, onDeviceReps);
   $("rep-count").textContent = displayReps;
   $("phase").textContent = r.phase || "—";
 
@@ -1938,6 +2113,14 @@ async function startSet(ex) {
       right: { phase: "ready", restElbow: null, peakDisplacement: 0, repStartMs: 0 },
     };
     lastCurlRepMs = 0;
+
+    onDeviceReps = 0;
+    exerciseMotionState = {
+      phase: "ready",
+      repStartMs: 0,
+      lastRepMs: 0,
+      minAngle: 180,
+    };
 
     sessionPhase = "positioning";
     steadyFrameCount = 0;
@@ -2139,14 +2322,14 @@ function renderSummary(r) {
   // A long set may have spanned several server sessions; the tracker holds all of them.
   const reps = tracker ? tracker.allReps() : (r && r.reps) || [];
   const backendTotal = tracker ? tracker.totalReps() : r ? r.rep_count : 0;
-  const total = exercise === "bicep_curl" ? Math.max(backendTotal, bicepCurlReps) : backendTotal;
+  const total = exercise === "bicep_curl" ? Math.max(backendTotal, bicepCurlReps) : Math.max(backendTotal, onDeviceReps);
   $("sum-reps").textContent = total;
 
   const flagged = reps.filter((x) => x.flags && x.flags.length > 0);
   const clean = reps.length - flagged.length;
   let cleanText = reps.length
     ? `${clean} clean · ${flagged.length} flagged`
-    : (total > 0 ? `${total} clean curls completed` : "No completed reps detected.");
+    : (total > 0 ? `${total} clean reps completed` : "No completed reps detected.");
   $("sum-clean").textContent = cleanText;
 
   // tally flags across the set
