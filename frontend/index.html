@@ -9,7 +9,7 @@
   <link rel="preload" as="font" type="font/woff2" href="./fonts/Phantom-Regular.woff2" crossorigin="anonymous" />
   <link rel="preload" as="font" type="font/woff2" href="./fonts/Phantom-Medium.woff2" crossorigin="anonymous" />
   <link rel="preload" as="font" type="font/woff2" href="./fonts/Phantom-Bold.woff2" crossorigin="anonymous" />
-  <link rel="stylesheet" href="styles.css?v=6.1.7" />
+  <link rel="stylesheet" href="styles.css?v=6.2.0" />
 </head>
 <body>
 
@@ -100,8 +100,25 @@
       <!-- Top bar: logo left, avatar right -->
       <div class="dash-topbar">
         <img src="kinetiq-logo.jpg" alt="Kinetiq" class="dash-logo-mark" onerror="this.style.display='none'" />
-        <div id="dash-user-chip" class="dash-avatar" hidden>
-          <span id="dash-avatar-initials">A</span>
+        <!-- Avatar dropdown -->
+        <div id="dash-user-chip" class="dash-avatar-wrap" hidden>
+          <button id="dash-avatar-btn" class="dash-avatar" aria-label="Profile menu" aria-haspopup="true" aria-expanded="false">
+            <span id="dash-avatar-initials">A</span>
+          </button>
+          <div id="dash-avatar-dropdown" class="avatar-dropdown" hidden role="menu">
+            <div class="avatar-dropdown-header">
+              <span id="avatar-dd-initials" class="avatar-dd-circle">A</span>
+              <div>
+                <div id="avatar-dd-name" class="avatar-dd-name">—</div>
+                <div id="avatar-dd-goal" class="avatar-dd-goal">—</div>
+              </div>
+            </div>
+            <div class="avatar-dropdown-divider"></div>
+            <button id="avatar-dd-profile" class="avatar-dropdown-item" role="menuitem">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg>
+              View Profile
+            </button>
+          </div>
         </div>
       </div>
 
@@ -292,6 +309,13 @@
         <button id="btn-back" class="ghost-btn" aria-label="Back">&#8592;</button>
         <span id="hud-exercise" class="hud-exercise">—</span>
         <span id="hud-lock" class="lock-pill lock-unknown">locating…</span>
+        <button id="btn-flip-camera" class="ghost-btn hud-flip-btn" aria-label="Flip camera" title="Switch camera" hidden>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" width="18" height="18">
+            <path d="M20 7h-3.5l-1.5-2h-6L7.5 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2Z"/>
+            <path d="M15 13a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z"/>
+            <path d="M17.5 9.5 19 8l1.5 1.5M7 9.5 5.5 8 4 9.5" opacity="0.5"/>
+          </svg>
+        </button>
       </div>
 
       <!-- positioning guidance pill -->
@@ -364,7 +388,60 @@
     </div>
   </section>
 
+  <!-- ============ SCREEN 4: profile ============ -->
+  <section id="screen-profile" class="screen">
+    <!-- Header -->
+    <div class="profile-header">
+      <button id="btn-profile-back" class="ghost-btn profile-back-btn" aria-label="Back">&#8592;</button>
+      <h1 class="profile-title">Profile</h1>
+      <button id="btn-profile-save" class="profile-save-btn">Save</button>
+    </div>
+
+    <div class="profile-body">
+      <!-- Avatar section -->
+      <div class="profile-avatar-section">
+        <div class="profile-avatar-large" id="profile-avatar-large">A</div>
+        <div class="profile-avatar-name" id="profile-avatar-display-name">—</div>
+        <div class="profile-avatar-goal-badge" id="profile-avatar-goal-badge">—</div>
+      </div>
+
+      <!-- Edit form -->
+      <div class="profile-form-section">
+        <div class="profile-section-label">Basic Info</div>
+
+        <div class="field-group">
+          <label class="field-label" for="profile-name">Name</label>
+          <input class="field-input" id="profile-name" type="text" placeholder="Your name" autocomplete="given-name" inputmode="text" />
+        </div>
+
+        <div class="field-row">
+          <div class="field-group">
+            <label class="field-label" for="profile-age">Age</label>
+            <input class="field-input" id="profile-age" type="number" placeholder="25" min="10" max="100" inputmode="numeric" />
+          </div>
+          <div class="field-group">
+            <label class="field-label" for="profile-weight">Weight (kg)</label>
+            <input class="field-input" id="profile-weight" type="number" placeholder="70" min="20" max="300" inputmode="decimal" />
+          </div>
+        </div>
+
+        <div class="field-group">
+          <label class="field-label" for="profile-height">Height (cm)</label>
+          <input class="field-input" id="profile-height" type="number" placeholder="175" min="100" max="250" inputmode="numeric" />
+        </div>
+
+        <div class="profile-section-label" style="margin-top:20px;">Fitness Goal</div>
+        <div class="goal-chips" id="profile-goal-chips">
+          <button class="goal-chip" data-goal="weight_loss"><span class="goal-chip-label">Weight Loss</span></button>
+          <button class="goal-chip" data-goal="strength"><span class="goal-chip-label">Strength</span></button>
+          <button class="goal-chip" data-goal="endurance"><span class="goal-chip-label">Endurance</span></button>
+          <button class="goal-chip" data-goal="general"><span class="goal-chip-label">General Fitness</span></button>
+        </div>
+      </div>
+    </div>
+  </section>
+
   <script src="config.js"></script>
-  <script type="module" src="app.js?v=6.1.7"></script>
+  <script type="module" src="app.js?v=6.2.0"></script>
 </body>
 </html>

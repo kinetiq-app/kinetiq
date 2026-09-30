@@ -44,6 +44,7 @@ const screens = {
   picker: $("screen-picker"),
   live: $("screen-live"),
   summary: $("screen-summary"),
+  profile: $("screen-profile"),
 };
 const video = $("video");
 const overlay = $("overlay");
@@ -53,6 +54,7 @@ const octx = overlay.getContext("2d");
 let landmarker = null;
 let severities = {};
 let stream = null;
+let cameraFacingMode = "user"; // "user" = front camera, "environment" = rear camera
 let running = false;
 let exercise = null;
 let sessionId = null;
@@ -128,6 +130,7 @@ function show(name) {
   else if (name === "picker") document.title = "Workouts — Kinetiq";
   else if (name === "onboarding") document.title = "Welcome — Kinetiq";
   else if (name === "splash") document.title = "Kinetiq";
+  else if (name === "profile") document.title = "Profile — Kinetiq";
 }
 
 // ---------------------------------------------------------------------------
@@ -420,9 +423,25 @@ function refreshDashboardProfile() {
   const greetingEl = $("dash-greeting");
   const subtitleEl = $("dash-subtitle-text");
 
+  // Dropdown elements
+  const ddInitials = $("avatar-dd-initials");
+  const ddName = $("avatar-dd-name");
+  const ddGoal = $("avatar-dd-goal");
+
+  const goalLabels = {
+    weight_loss: "Weight Loss",
+    strength: "Strength Training",
+    endurance: "Endurance",
+    general: "General Fitness",
+  };
+
   if (profile && profile.name) {
+    const initials = profile.name.charAt(0).toUpperCase();
     if (chip) chip.hidden = false;
-    if (avatarEl) avatarEl.textContent = profile.name.charAt(0).toUpperCase();
+    if (avatarEl) avatarEl.textContent = initials;
+    if (ddInitials) ddInitials.textContent = initials;
+    if (ddName) ddName.textContent = profile.name;
+    if (ddGoal) ddGoal.textContent = goalLabels[profile.fitnessGoal] || "Goal not set";
     if (nameEl) nameEl.textContent = profile.name;
     if (greetingEl) {
       const hour = new Date().getHours();
@@ -871,26 +890,85 @@ function syncOverlayDimensions() {
   applyDimensions();
 }
 
+// Detect if device has more than one camera (front + rear) and show flip button
+async function detectMultipleCameras() {
+  try {
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    const videoInputs = devices.filter((d) => d.kind === "videoinput");
+    const flipBtn = $("btn-flip-camera");
+    if (flipBtn) flipBtn.hidden = videoInputs.length < 2;
+  } catch {
+    // If enumeration fails, leave flip button hidden
+  }
+}
+
 async function startCamera() {
-  // If active stream already exists with live tracks, reuse it instantly!
+  // If active stream already exists with live tracks in the SAME facing mode, reuse it instantly!
   if (stream && stream.active && stream.getVideoTracks().some((t) => t.readyState === "live")) {
-    if (video.srcObject !== stream) {
-      video.srcObject = stream;
+    const track = stream.getVideoTracks()[0];
+    const settings = track.getSettings ? track.getSettings() : {};
+    // If facing mode matches (or is unspecified), reuse
+    if (!settings.facingMode || settings.facingMode === cameraFacingMode) {
+      if (video.srcObject !== stream) {
+        video.srcObject = stream;
+      }
+      try {
+        await video.play();
+      } catch {}
+      syncOverlayDimensions();
+      applyVideoMirror();
+      return;
     }
-    try {
-      await video.play();
-    } catch {}
-    syncOverlayDimensions();
-    return;
+    // Facing mode changed — stop old stream first
+    stream.getTracks().forEach((t) => t.stop());
+    stream = null;
+    if (video) video.srcObject = null;
   }
 
   stream = await navigator.mediaDevices.getUserMedia({
-    video: { facingMode: "user", width: { ideal: 640 }, height: { ideal: 480 } },
+    video: { facingMode: cameraFacingMode, width: { ideal: 640 }, height: { ideal: 480 } },
     audio: false,
   });
   video.srcObject = stream;
   await video.play();
   syncOverlayDimensions();
+  applyVideoMirror();
+
+  // After we have a stream, detect if multiple cameras are available
+  detectMultipleCameras();
+}
+
+// Mirror front camera for natural feedback; don't mirror rear camera
+function applyVideoMirror() {
+  const isFront = cameraFacingMode === "user";
+  video.style.transform = isFront ? "scaleX(-1)" : "scaleX(1)";
+  overlay.style.transform = isFront ? "scaleX(-1)" : "scaleX(1)";
+}
+
+// Flip between front and rear camera during a live session
+async function flipCamera() {
+  const flipBtn = $("btn-flip-camera");
+  if (flipBtn) { flipBtn.disabled = true; flipBtn.style.opacity = "0.4"; }
+
+  cameraFacingMode = cameraFacingMode === "user" ? "environment" : "user";
+  smoothedLandmarks = null; // reset EMA — new camera, new coordinate frame
+
+  // Stop existing stream tracks so device can switch cameras
+  if (stream) {
+    stream.getTracks().forEach((t) => t.stop());
+    stream = null;
+    if (video) video.srcObject = null;
+  }
+
+  try {
+    await startCamera();
+  } catch {
+    // Revert on failure
+    cameraFacingMode = cameraFacingMode === "user" ? "environment" : "user";
+    try { await startCamera(); } catch {}
+  } finally {
+    if (flipBtn) { flipBtn.disabled = false; flipBtn.style.opacity = ""; }
+  }
 }
 
 function stopCamera(releaseTracks = false) {
@@ -2083,6 +2161,9 @@ async function startSet(ex) {
     sessionId = newSessionId();
     firstPost = true;
     droppedFrames = 0;
+    cameraFacingMode = "user"; // always start with front camera
+    const flipBtn = $("btn-flip-camera");
+    if (flipBtn) flipBtn.hidden = true; // hidden until device confirms multiple cameras
     tracker = createSetTracker(() => sessionMaxFrames, {
       rollAt: CFG.SESSION_ROLL_AT,
       forceRollAt: CFG.SESSION_FORCE_ROLL_AT,
@@ -2420,6 +2501,179 @@ if (skipBtn) {
 }
 
 window.addEventListener("pagehide", () => stopCamera(true));
+
+// ---------------------------------------------------------------------------
+// Avatar dropdown — open/close
+(function initAvatarDropdown() {
+  const avatarBtn = $("dash-avatar-btn");
+  const dropdown = $("dash-avatar-dropdown");
+  if (!avatarBtn || !dropdown) return;
+
+  function openDropdown() {
+    dropdown.hidden = false;
+    avatarBtn.setAttribute("aria-expanded", "true");
+    // Close on outside click
+    setTimeout(() => {
+      document.addEventListener("click", closeOnOutside, { once: true, capture: true });
+    }, 0);
+  }
+
+  function closeDropdown() {
+    dropdown.hidden = true;
+    avatarBtn.setAttribute("aria-expanded", "false");
+  }
+
+  function closeOnOutside(e) {
+    const wrap = $("dash-user-chip");
+    if (wrap && !wrap.contains(e.target)) {
+      closeDropdown();
+    }
+  }
+
+  avatarBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    if (dropdown.hidden) {
+      openDropdown();
+    } else {
+      closeDropdown();
+    }
+  });
+
+  // "View Profile" button in the dropdown
+  const viewProfileBtn = $("avatar-dd-profile");
+  if (viewProfileBtn) {
+    viewProfileBtn.addEventListener("click", () => {
+      closeDropdown();
+      openProfileScreen();
+    });
+  }
+})();
+
+// ---------------------------------------------------------------------------
+// Profile screen — open, populate, save, close
+let profilePreviousScreen = "picker"; // where to go back to
+
+function openProfileScreen() {
+  profilePreviousScreen = "picker";
+  const profile = loadProfile() || {};
+
+  // Populate fields
+  const nameEl = $("profile-name");
+  const ageEl = $("profile-age");
+  const weightEl = $("profile-weight");
+  const heightEl = $("profile-height");
+
+  if (nameEl) nameEl.value = profile.name || "";
+  if (ageEl) ageEl.value = profile.age || "";
+  if (weightEl) weightEl.value = profile.weightKg || "";
+  if (heightEl) heightEl.value = profile.heightCm || "";
+
+  // Populate goal chips
+  const chips = document.querySelectorAll("#profile-goal-chips .goal-chip");
+  chips.forEach((c) => {
+    c.classList.toggle("selected", c.dataset.goal === (profile.fitnessGoal || "general"));
+  });
+
+  // Populate avatar preview
+  updateProfileAvatarPreview();
+
+  show("profile");
+
+  // Chip click — update selection and live-update avatar preview
+  chips.forEach((c) => {
+    c.onclick = () => {
+      chips.forEach((x) => x.classList.remove("selected"));
+      c.classList.add("selected");
+    };
+  });
+
+  // Live-update avatar on name input
+  if (nameEl) {
+    nameEl.oninput = () => updateProfileAvatarPreview();
+  }
+}
+
+function updateProfileAvatarPreview() {
+  const nameEl = $("profile-name");
+  const name = nameEl ? nameEl.value.trim() : "";
+
+  const avatarLarge = $("profile-avatar-large");
+  const avatarName = $("profile-avatar-display-name");
+  const goalBadge = $("profile-avatar-goal-badge");
+
+  if (avatarLarge) avatarLarge.textContent = name ? name.charAt(0).toUpperCase() : "?";
+  if (avatarName) avatarName.textContent = name || "Your name";
+
+  const chips = document.querySelectorAll("#profile-goal-chips .goal-chip.selected");
+  const goalLabels = {
+    weight_loss: "Weight Loss",
+    strength: "Strength",
+    endurance: "Endurance",
+    general: "General Fitness",
+  };
+  const selectedGoal = chips.length > 0 ? chips[0].dataset.goal : null;
+  if (goalBadge) goalBadge.textContent = goalLabels[selectedGoal] || "No goal set";
+}
+
+function saveProfileFromScreen() {
+  const nameEl = $("profile-name");
+  const name = nameEl ? nameEl.value.trim() : "";
+
+  const chips = document.querySelectorAll("#profile-goal-chips .goal-chip.selected");
+  const selectedGoal = chips.length > 0 ? chips[0].dataset.goal : "general";
+
+  const existing = loadProfile() || {};
+  const profile = {
+    ...existing,
+    name,
+    age: parseInt($("profile-age")?.value) || existing.age || null,
+    weightKg: parseFloat($("profile-weight")?.value) || existing.weightKg || null,
+    heightCm: parseInt($("profile-height")?.value) || existing.heightCm || null,
+    fitnessGoal: selectedGoal,
+  };
+
+  saveProfile(profile);
+  refreshDashboard();
+
+  // Animate save button briefly
+  const saveBtn = $("btn-profile-save");
+  if (saveBtn) {
+    const original = saveBtn.textContent;
+    saveBtn.textContent = "Saved ✓";
+    saveBtn.style.background = "var(--good)";
+    setTimeout(() => {
+      saveBtn.textContent = original;
+      saveBtn.style.background = "";
+    }, 1200);
+  }
+
+  // Return to dashboard after save
+  setTimeout(() => {
+    show("picker");
+    switchTab("dashboard");
+  }, 700);
+}
+
+const profileBackBtn = $("btn-profile-back");
+if (profileBackBtn) {
+  profileBackBtn.addEventListener("click", () => {
+    show("picker");
+    switchTab("dashboard");
+  });
+}
+
+const profileSaveBtn = $("btn-profile-save");
+if (profileSaveBtn) profileSaveBtn.addEventListener("click", saveProfileFromScreen);
+
+// ---------------------------------------------------------------------------
+// Camera flip button
+const flipCameraBtn = $("btn-flip-camera");
+if (flipCameraBtn) {
+  flipCameraBtn.addEventListener("click", () => {
+    if (running) flipCamera();
+  });
+}
+
 
 loadSeverities();
 

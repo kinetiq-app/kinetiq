@@ -1,5 +1,5 @@
 /* ==========================================================================
-   Kinetiq — v6.1 Design System
+   Kinetiq — v6.2 Design System
    Dark-first. Single accent. Maximum clarity. Phantom-inspired.
    ========================================================================== */
 
@@ -643,8 +643,8 @@ body { overflow: hidden; }
    ============================================================ */
 #screen-live { padding: 0; }
 .video-wrap { position: relative; flex: 1; background: #000; overflow: hidden; }
-#video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); }
-#overlay { position: absolute; inset: 0; width: 100%; height: 100%; transform: scaleX(-1); }
+#video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+#overlay { position: absolute; inset: 0; width: 100%; height: 100%; }
 
 .hud-top {
   position: absolute; top: 0; left: 0; right: 0;
@@ -908,3 +908,217 @@ body { overflow: hidden; }
   text-align: center; font-family: inherit;
 }
 .secondary-btn:hover, .secondary-btn:active { background: var(--surface-raised); }
+
+/* ============================================================
+   AVATAR DROPDOWN
+   ============================================================ */
+.dash-avatar-wrap {
+  position: absolute;
+  right: 0;
+  z-index: 20;
+}
+.dash-avatar {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  background: var(--surface-raised);
+  border: 1px solid var(--border-strong);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text);
+  cursor: pointer;
+  transition: background 0.15s, transform 0.1s;
+  font-family: inherit;
+}
+.dash-avatar:active { transform: scale(0.93); }
+
+.avatar-dropdown {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  min-width: 220px;
+  background: var(--bg-02);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 12px 40px rgba(0,0,0,0.6), 0 2px 8px rgba(0,0,0,0.3);
+  overflow: hidden;
+  animation: dropdownSlide 0.18s cubic-bezier(0.16,1,0.3,1);
+  z-index: 100;
+}
+@keyframes dropdownSlide {
+  from { opacity: 0; transform: translateY(-6px) scale(0.97); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+.avatar-dropdown-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 16px 16px 14px;
+}
+.avatar-dd-circle {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: var(--accent-dim);
+  border: 1px solid rgba(124,111,247,0.3);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--accent);
+  flex-shrink: 0;
+}
+.avatar-dd-name { font-size: 14px; font-weight: 700; color: var(--text); letter-spacing: -0.2px; }
+.avatar-dd-goal { font-size: 11px; color: var(--muted); margin-top: 2px; }
+
+.avatar-dropdown-divider {
+  height: 1px;
+  background: var(--border);
+  margin: 0 12px;
+}
+
+.avatar-dropdown-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 13px 16px;
+  background: transparent;
+  border: none;
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 500;
+  text-align: left;
+  cursor: pointer;
+  font-family: inherit;
+  transition: background 0.12s;
+}
+.avatar-dropdown-item svg { opacity: 0.6; flex-shrink: 0; }
+.avatar-dropdown-item:hover { background: var(--surface-raised); }
+.avatar-dropdown-item:active { opacity: 0.7; }
+
+/* ============================================================
+   HUD CAMERA FLIP BUTTON
+   ============================================================ */
+.hud-flip-btn {
+  flex-shrink: 0;
+  margin-left: 6px;
+}
+
+/* ============================================================
+   PROFILE SCREEN
+   ============================================================ */
+#screen-profile {
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+}
+#screen-profile::-webkit-scrollbar { display: none; }
+
+.profile-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: max(16px, env(safe-area-inset-top)) 20px 12px;
+  border-bottom: 1px solid var(--border);
+  position: sticky;
+  top: 0;
+  background: var(--bg);
+  z-index: 10;
+  flex-shrink: 0;
+}
+.profile-back-btn {
+  /* override ghost-btn size slightly for the header context */
+  background: transparent;
+  border-color: transparent;
+  color: var(--muted);
+}
+.profile-back-btn:hover { background: var(--surface); border-color: var(--border); }
+.profile-title {
+  font-size: 17px;
+  font-weight: 700;
+  letter-spacing: -0.3px;
+  margin: 0;
+  color: var(--text);
+}
+.profile-save-btn {
+  background: var(--accent);
+  border: none;
+  border-radius: var(--radius-sm);
+  color: #fff;
+  font-size: 14px;
+  font-weight: 700;
+  padding: 8px 16px;
+  cursor: pointer;
+  transition: opacity 0.15s, transform 0.1s;
+  font-family: inherit;
+}
+.profile-save-btn:active { opacity: 0.8; transform: scale(0.97); }
+
+.profile-body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  padding: 0 20px calc(32px + env(safe-area-inset-bottom));
+}
+
+/* Avatar banner */
+.profile-avatar-section {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 28px 0 24px;
+  gap: 8px;
+}
+.profile-avatar-large {
+  width: 76px;
+  height: 76px;
+  border-radius: 50%;
+  background: var(--accent-dim);
+  border: 2px solid rgba(124,111,247,0.35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 30px;
+  font-weight: 800;
+  color: var(--accent);
+  letter-spacing: -1px;
+}
+.profile-avatar-name {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--text);
+  letter-spacing: -0.5px;
+}
+.profile-avatar-goal-badge {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 4px 12px;
+  border-radius: 999px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+/* Form section */
+.profile-form-section {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.profile-section-label {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  color: var(--muted);
+  margin-bottom: -4px;
+}
