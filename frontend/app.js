@@ -87,8 +87,8 @@ let plankDominantFaults = {};
 // Bicep Curl on-device tracking state (supports front & side view rep counting)
 let bicepCurlReps = 0;
 let bicepCurlArms = {
-  left: { phase: "ready", restElbow: null, peakDisplacement: 0, repStartMs: 0 },
-  right: { phase: "ready", restElbow: null, peakDisplacement: 0, repStartMs: 0 },
+  left: { phase: "ready", restElbow: null, peakDisplacement: 0, repStartMs: 0, minAngle: 180, hasExtended: false, restULen: 0 },
+  right: { phase: "ready", restElbow: null, peakDisplacement: 0, repStartMs: 0, minAngle: 180, hasExtended: false, restULen: 0 },
 };
 let lastCurlRepMs = 0;
 
@@ -1060,6 +1060,19 @@ function calcAngleDeg(a, b, c) {
   return deg;
 }
 
+// 3D joint angle calculation helper (angle at vertex b in degrees using x, y, z)
+function calcAngle3DDeg(a, b, c) {
+  const v1x = a.x - b.x, v1y = a.y - b.y, v1z = (a.z ?? 0) - (b.z ?? 0);
+  const v2x = c.x - b.x, v2y = c.y - b.y, v2z = (c.z ?? 0) - (b.z ?? 0);
+  const dot = v1x * v2x + v1y * v2y + v1z * v2z;
+  const len1 = Math.hypot(v1x, v1y, v1z);
+  const len2 = Math.hypot(v2x, v2y, v2z);
+  if (len1 < 1e-6 || len2 < 1e-6) return 180.0;
+  let cosTheta = dot / (len1 * len2);
+  cosTheta = Math.max(-1.0, Math.min(1.0, cosTheta));
+  return (Math.acos(cosTheta) * 180.0) / Math.PI;
+}
+
 // Format milliseconds into MM:SS or Xs for clean display
 function formatHoldTime(ms) {
   const totalSecs = Math.floor(ms / 1000);
@@ -1070,56 +1083,118 @@ function formatHoldTime(ms) {
 
 // ---------------------------------------------------------------------------
 // Real-time Plank (hold) posture evaluator
-// Analyzes vector alignment between Shoulder, Hip, and Ankle.
+// Analyzes vector alignment between Shoulder, Hip, Knee, and Ankle.
+// Detects exhaustion/lying flat, bent-knee planks, and severe vs mild sag/pike.
 function evaluatePlankPosture(lm) {
   if (!lm || lm.length < 33) return { state: "broken", angle: 0, cue: "Can't see body" };
 
   const ls = lm[11], rs = lm[12]; // shoulders
+  const le = lm[13], re = lm[14]; // elbows
+  const lw = lm[15], rw = lm[16]; // wrists
   const lh = lm[23], rh = lm[24]; // hips
+  const lk = lm[25], rk = lm[26]; // knees
   const la = lm[27], ra = lm[28]; // ankles
 
   // Choose side with highest confidence
-  const leftVis = (ls.visibility ?? 0) + (lh.visibility ?? 0) + (la.visibility ?? 0);
-  const rightVis = (rs.visibility ?? 0) + (rh.visibility ?? 0) + (ra.visibility ?? 0);
+  const leftVis = (ls?.visibility ?? 0) + (lh?.visibility ?? 0) + (la?.visibility ?? 0) + (lk?.visibility ?? 0);
+  const rightVis = (rs?.visibility ?? 0) + (rh?.visibility ?? 0) + (ra?.visibility ?? 0) + (rk?.visibility ?? 0);
 
   const s = leftVis >= rightVis ? ls : rs;
+  const e = leftVis >= rightVis ? le : re;
+  const w = leftVis >= rightVis ? lw : rw;
   const h = leftVis >= rightVis ? lh : rh;
+  const k = leftVis >= rightVis ? lk : rk;
   const a = leftVis >= rightVis ? la : ra;
 
-  const minVis = Math.min(s.visibility ?? 0, h.visibility ?? 0);
-  if (minVis < 0.40) {
+  const minVis = Math.min(s?.visibility ?? 0, h?.visibility ?? 0, a?.visibility ?? 0);
+  if (minVis < 0.35) {
     return { state: "broken", angle: 0, cue: "Step back into view" };
   }
 
   // Orientation check: in a plank, body must be roughly horizontal
   const dx = Math.abs(s.x - a.x);
   const dy = Math.abs(s.y - a.y);
-  const isHorizontal = dx > dy * 0.65;
+  const isHorizontal = dx > dy * 0.55 && dx >= 0.12;
 
   if (!isHorizontal) {
     return { state: "broken", angle: 0, cue: "Get down into plank posture" };
   }
 
+  // Ground plane reference:
+  // In a forearm plank, elbow (e) rests on the floor. In a high plank (palms), wrist (w) rests on floor.
+  const isHighPlank = (w.y >= e.y + 0.06);
+  const armFloorY = isHighPlank ? w.y : Math.max(e.y, w.y);
+  const armElevation = Math.max(e.y - s.y, (w.y - s.y) * 0.65);
+  const torsoThighYSpread = Math.max(s.y, h.y, k?.y ?? h.y) - Math.min(s.y, h.y, k?.y ?? h.y);
+
+  // 1. Detect exhaustion / lying flat on the floor:
+  // In a valid plank, chest/shoulders must be elevated by arms (forearms or hands: armElevation >= 0.14).
+  // When resting on the ground (torso and thighs touching or resting flat on the floor):
+  // - Arm elevation collapses (armElevation < 0.065) OR
+  // - Chest is not elevated (armElevation < 0.14) AND torso/thighs are flat near floor level
+  const isFloorResting = armElevation < 0.14 && (
+    (torsoThighYSpread <= 0.048 && h.y >= armFloorY - 0.12) ||
+    (h.y >= armFloorY - 0.075 && (k?.y ?? h.y) >= armFloorY - 0.075)
+  );
+  const isLyingFlat = armElevation < 0.065 || isFloorResting;
+
+  if (isLyingFlat) {
+    return { state: "broken", angle: 180, cue: "Resting on floor — press up into plank" };
+  }
+
+  // 2. Alignment & Bent knee / knee-down plank detection:
+  // Enforce straight leg alignment: calcAngleDeg(hip, knee, ankle) >= 155°
+  // AND ensure knees are not resting on the floor (knees at or below arm/floor level)
+  const kneeVis = k?.visibility ?? 0;
+  if (kneeVis >= 0.30) {
+    const kneeAngle = calcAngleDeg(h, k, a);
+    const tk = (k.x - h.x) / (a.x - h.x || 0.0001);
+    const expectedKneeY = h.y + tk * (a.y - h.y);
+    const kneeSag = k.y - expectedKneeY;
+    const isKneeAtFloorLevel = (k.y >= armFloorY - 0.025) && (k.y >= a.y - 0.055 || k.y >= armFloorY - 0.01);
+
+    if (kneeAngle < 155.0 || kneeSag > 0.060 || isKneeAtFloorLevel) {
+      return {
+        state: "broken",
+        angle: calcAngleDeg(s, h, a),
+        cue: "Knees on floor — lift knees to full plank",
+      };
+    }
+  }
+
+  // 3. Hip alignment and severe vs mild sag/pike classification
   const angle = calcAngleDeg(s, h, a);
 
   // Sag vs Pike deviation relative to line connecting shoulder and ankle
   const t = (h.x - s.x) / (a.x - s.x || 0.0001);
   const lineY = s.y + t * (a.y - s.y);
-  const diffY = h.y - lineY; // positive = hip sagging down toward floor
+  const diffY = h.y - lineY; // positive = hip sagging down toward floor; negative = hip piking up
 
-  if (angle >= 158 && angle <= 180 && Math.abs(diffY) <= 0.038) {
+  // Severe hip deviation: hips sagging down near floor or piking high in inverted-V
+  if (diffY > 0.068 || (angle < 148.0 && diffY > 0)) {
+    return { state: "broken", angle, cue: "Hips sagging too low — straighten body" };
+  }
+
+  if (diffY < -0.068 || (angle < 148.0 && diffY < 0)) {
+    return { state: "broken", angle, cue: "Hips piked too high — lower to straight line" };
+  }
+
+  // Perfect posture
+  if (angle >= 158.0 && angle <= 180.0 && Math.abs(diffY) <= 0.038) {
     return { state: "good", angle, cue: "Great line — hold steady!" };
   }
 
-  if (diffY > 0.035 || (angle < 158 && diffY > 0)) {
+  // Mild hip sag (warn/yellow)
+  if (diffY > 0.035 || (angle < 158.0 && diffY > 0)) {
     return { state: "sag", angle, cue: "Raise your hips to align with core" };
   }
 
-  if (diffY < -0.035 || (angle < 158 && diffY < 0)) {
+  // Mild hip pike (warn/yellow)
+  if (diffY < -0.035 || (angle < 158.0 && diffY < 0)) {
     return { state: "pike", angle, cue: "Lower your hips to a straight line" };
   }
 
-  if (angle >= 148 && angle <= 188) {
+  if (angle >= 148.0 && Math.abs(diffY) <= 0.045) {
     return { state: "good", angle, cue: "Good posture — keep holding" };
   }
 
@@ -1208,51 +1283,87 @@ function evaluateFraming(lm, ex) {
 
 // ---------------------------------------------------------------------------
 // Real-time Bicep Curl Evaluator & Rep Counter
-// Tracks fist elevation relative to shoulder level and monitors elbow stability.
-// Supports both FRONT and SIDE views, with tolerance for natural movement.
+// Tracks elbow flexion, arm excursion, and upper-arm stability.
+// Supports both FRONT and SIDE views without false positives from straight-arm raises or foreshortened half-reps.
 function evaluateBicepCurlLive(lm, now) {
   if (!lm || lm.length < 33) return;
 
   const arms = [
-    { side: "left", s: lm[11], e: lm[13], w: lm[15], state: bicepCurlArms.left },
-    { side: "right", s: lm[12], e: lm[14], w: lm[16], state: bicepCurlArms.right },
+    { side: "left", s: lm[11], e: lm[13], w: lm[15], h: lm[23], state: bicepCurlArms.left },
+    { side: "right", s: lm[12], e: lm[14], w: lm[16], h: lm[24], state: bicepCurlArms.right },
   ];
 
   let repCompletedThisFrame = false;
   let activePhaseText = "READY";
   let activeCue = null;
 
+  const isSideProfile = Math.abs(lm[11].x - lm[12].x) < 0.12;
+
   for (const arm of arms) {
-    const s = arm.s, e = arm.e, w = arm.w;
+    const s = arm.s, e = arm.e, w = arm.w, h = arm.h;
     const vis = Math.min(s.visibility ?? 0, e.visibility ?? 0, w.visibility ?? 0);
     if (vis < 0.35) continue;
 
     const uLen = Math.hypot(s.x - e.x, s.y - e.y);
     if (uLen < 0.05) continue;
 
-    const angle = calcAngleDeg(s, e, w);
+    // 1. Joint angles
+    const angle2D = calcAngleDeg(s, e, w);
+    const has3D = (s.z != null && e.z != null && w.z != null) &&
+      (Math.abs(s.z) > 0.005 || Math.abs(e.z) > 0.005 || Math.abs(w.z) > 0.005);
+    const angle3D = has3D ? calcAngle3DDeg(s, e, w) : angle2D;
 
-    // Fist proximity to shoulder level:
-    // When fist is near shoulder level, (w.y - s.y) is small (within 40% of upper arm length)
-    // or elbow angle is flexed <= 75 degrees.
+    // In side view, 2D angle is direct and accurate. In front view, 3D angle captures depth.
+    const angle = isSideProfile ? angle2D : (has3D ? Math.min(angle2D, angle3D) : angle2D);
+
+    // 2. Elbow & upper-arm stabilization:
+    // In any valid curl, elbow must remain below shoulder (not raised overhead or in high front raise)
+    const isElbowBelowShoulder = e.y >= s.y + 0.12 * uLen;
+    // Torso angle check: if hip is visible, upper arm shouldn't swing way out (>65° from torso)
+    const torsoAngle = (h && (h.visibility ?? 0) >= 0.30)
+      ? calcAngleDeg(h, s, e)
+      : calcAngleDeg({ x: s.x, y: s.y + 1.0 }, s, e);
+    const isArmRaise = !isElbowBelowShoulder || torsoAngle > 65.0;
+
+    // 3. Top Contraction:
+    // Requires:
+    // - Elbow stays down near torso (not a shoulder raise / overhead press)
+    // - Arm is NOT straight (elbow angle <= 80° in side view, <= 95° in front view)
+    // - Fist reaches up near shoulder height (w.y <= s.y + 0.38 * uLen)
+    // - In front view: wrist MUST rise significantly above elbow (w.y <= e.y - 0.15 * uLen) — eliminates half-reps!
     const distToShoulderY = w.y - s.y;
-    const isAtShoulder = distToShoulderY <= 0.40 * uLen || angle <= 75.0;
+    const isFistNearShoulder = distToShoulderY <= 0.38 * uLen;
+    const isWristAboveElbow = w.y <= e.y - 0.15 * uLen;
 
-    // Full extension at bottom: wrist below elbow or angle near 140+ degrees
-    const isExtendedAtBottom = (w.y >= e.y + 0.10 * uLen) || angle >= 140.0;
+    let isAtTop = false;
+    if (!isArmRaise && isFistNearShoulder) {
+      if (isSideProfile) {
+        isAtTop = (angle <= 80.0);
+      } else {
+        isAtTop = isWristAboveElbow && (angle <= 95.0);
+      }
+    }
+
+    // 4. Bottom Extension:
+    // Arm extended down: wrist hanging down below elbow OR elbow angle open (>= 135°)
+    const isWristBelowElbow = w.y >= e.y + 0.10 * uLen;
+    const isExtendedAtBottom = (angle >= 135.0 || isWristBelowElbow) && !isArmRaise;
 
     const st = arm.state;
+    if (st.minAngle == null) st.minAngle = 180;
 
     if (st.phase === "ready") {
       st.restElbow = { x: e.x, y: e.y };
       st.peakDisplacement = 0;
       st.repStartMs = 0;
+      st.minAngle = 180;
 
-      // User starts curling: arm leaves full bottom extension
-      if (!isExtendedAtBottom && angle < 135.0) {
+      // User starts curling: arm leaves bottom extension and bends
+      if (!isExtendedAtBottom && (isSideProfile ? angle < 130.0 : w.y < e.y + 0.05 * uLen) && !isArmRaise) {
         st.phase = "curling";
         st.repStartMs = now;
         st.peakDisplacement = 0;
+        st.minAngle = angle;
       }
     } else if (st.phase === "curling") {
       activePhaseText = "CURLING UP";
@@ -1262,10 +1373,13 @@ function evaluateBicepCurlLive(lm, now) {
         if (drift > st.peakDisplacement) st.peakDisplacement = drift;
       }
 
-      if (isAtShoulder) {
+      if (angle < st.minAngle) st.minAngle = angle;
+
+      if (isAtTop) {
         st.phase = "top";
       } else if (isExtendedAtBottom) {
         st.phase = "ready";
+        st.minAngle = 180;
       }
     } else if (st.phase === "top") {
       activePhaseText = "TOP CONTRACTION";
@@ -1275,19 +1389,8 @@ function evaluateBicepCurlLive(lm, now) {
         if (drift > st.peakDisplacement) st.peakDisplacement = drift;
       }
 
-      // Descending away from shoulder level
-      if (distToShoulderY > 0.45 * uLen && angle > 80.0) {
-        st.phase = "lowering";
-      }
-    } else if (st.phase === "lowering") {
-      activePhaseText = "LOWERING";
+      if (angle < st.minAngle) st.minAngle = angle;
 
-      if (st.restElbow) {
-        const drift = Math.hypot(e.x - st.restElbow.x, e.y - st.restElbow.y) / uLen;
-        if (drift > st.peakDisplacement) st.peakDisplacement = drift;
-      }
-
-      // Reached bottom extension: validate and count rep
       if (isExtendedAtBottom) {
         const repDuration = now - (st.repStartMs || now);
         if (repDuration >= 400 && (now - lastCurlRepMs > 350)) {
@@ -1295,7 +1398,6 @@ function evaluateBicepCurlLive(lm, now) {
           lastCurlRepMs = now;
           bicepCurlReps++;
 
-          // Form assessment: elbow stability check with room for error
           const excessiveElbowMove = st.peakDisplacement > 0.45;
           if (excessiveElbowMove) {
             activeCue = "Rep counted! Next rep, keep elbows more pinned";
@@ -1306,6 +1408,38 @@ function evaluateBicepCurlLive(lm, now) {
         st.phase = "ready";
         st.restElbow = { x: e.x, y: e.y };
         st.peakDisplacement = 0;
+        st.minAngle = 180;
+      } else if (!isAtTop && (distToShoulderY > 0.40 * uLen || (isSideProfile && angle > 80.0))) {
+        st.phase = "lowering";
+      }
+    } else if (st.phase === "lowering") {
+      activePhaseText = "LOWERING";
+
+      if (st.restElbow) {
+        const drift = Math.hypot(e.x - st.restElbow.x, e.y - st.restElbow.y) / uLen;
+        if (drift > st.peakDisplacement) st.peakDisplacement = drift;
+      }
+
+      if (isExtendedAtBottom) {
+        const repDuration = now - (st.repStartMs || now);
+        if (repDuration >= 400 && (now - lastCurlRepMs > 350)) {
+          repCompletedThisFrame = true;
+          lastCurlRepMs = now;
+          bicepCurlReps++;
+
+          const excessiveElbowMove = st.peakDisplacement > 0.45;
+          if (excessiveElbowMove) {
+            activeCue = "Rep counted! Next rep, keep elbows more pinned";
+          } else {
+            activeCue = "Good rep! Elbows stayed stationary";
+          }
+        }
+        st.phase = "ready";
+        st.restElbow = { x: e.x, y: e.y };
+        st.peakDisplacement = 0;
+        st.minAngle = 180;
+      } else if (isAtTop) {
+        st.phase = "top";
       }
     }
   }
@@ -1522,9 +1656,11 @@ function smoothLandmarks(rawLm) {
     if (distSq > 0.06) {
       prev.x = raw.x;
       prev.y = raw.y;
+      prev.z = raw.z ?? 0;
     } else {
       prev.x = ALPHA * raw.x + (1 - ALPHA) * prev.x;
       prev.y = ALPHA * raw.y + (1 - ALPHA) * prev.y;
+      prev.z = ALPHA * (raw.z ?? 0) + (1 - ALPHA) * (prev.z ?? 0);
     }
   }
   return smoothedLandmarks;
@@ -1711,7 +1847,7 @@ function loop() {
             plankBreakFrames++;
             $("phase").textContent = "FORM BROKEN";
             $("phase").className = "rep-phase bad";
-            $("cue").textContent = "Posture broken — hold straight line";
+            $("cue").textContent = posture.cue || "Posture broken — hold straight line";
             $("cue").hidden = false;
             holdLastTickMs = now;
 
@@ -2111,7 +2247,7 @@ function drawSkeleton(lm, theme = { r: 16, g: 185, b: 129 }) {
     if (!pa || !pb) continue;
     const visA = pa.visibility ?? 0;
     const visB = pb.visibility ?? 0;
-    if (visA < 0.45 || visB < 0.45) continue;
+    if (visA < 0.35 || visB < 0.35) continue;
 
     const alpha = Math.min(visA, visB);
     octx.beginPath();
@@ -2127,7 +2263,7 @@ function drawSkeleton(lm, theme = { r: 16, g: 185, b: 129 }) {
     const p = lm[idx];
     if (!p) continue;
     const vis = p.visibility ?? 0;
-    if (vis < 0.45) continue;
+    if (vis < 0.35) continue;
 
     const x = p.x * overlay.width;
     const y = p.y * overlay.height;
@@ -2190,8 +2326,8 @@ async function startSet(ex) {
 
     bicepCurlReps = 0;
     bicepCurlArms = {
-      left: { phase: "ready", restElbow: null, peakDisplacement: 0, repStartMs: 0 },
-      right: { phase: "ready", restElbow: null, peakDisplacement: 0, repStartMs: 0 },
+      left: { phase: "ready", restElbow: null, peakDisplacement: 0, repStartMs: 0, minAngle: 180, hasExtended: false, restULen: 0 },
+      right: { phase: "ready", restElbow: null, peakDisplacement: 0, repStartMs: 0, minAngle: 180, hasExtended: false, restULen: 0 },
     };
     lastCurlRepMs = 0;
 

@@ -2,4 +2,5 @@ _worker.js
 CLAUDE.md
 package.json
 segments.test.mjs
+kinematics.test.mjs
 set-api-url.ps1

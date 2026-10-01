@@ -644,7 +644,7 @@ body { overflow: hidden; }
 #screen-live { padding: 0; }
 .video-wrap { position: relative; flex: 1; background: #000; overflow: hidden; }
 #video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
-#overlay { position: absolute; inset: 0; width: 100%; height: 100%; }
+#overlay { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
 
 .hud-top {
   position: absolute; top: 0; left: 0; right: 0;
