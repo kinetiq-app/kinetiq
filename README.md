@@ -2,441 +2,382 @@
 
 **AI-powered movement coaching, entirely on your device.**
 
-Kinetiq uses your webcam and an on-device pose estimation model to count reps, detect form faults, and deliver real-time coaching cues — without a single pixel ever leaving your browser.
+Kinetiq uses your webcam and on-device pose estimation to count reps, measure hold durations, detect biomechanical faults, and deliver real-time audio and visual coaching cues — without a single pixel ever leaving your browser.
 
 ---
 
 ## Table of Contents
 
 - [How it works](#how-it-works)
-- [Features](#features)
-- [Supported exercises](#supported-exercises)
-- [Architecture](#architecture)
-- [Privacy](#privacy)
-- [Running locally](#running-locally)
-- [Deployment](#deployment)
-- [API reference](#api-reference)
-- [Testing](#testing)
-- [Project structure](#project-structure)
-- [Configuration](#configuration)
+- [Current Version Features (v5.0)](#current-version-features-v50)
+- [Supported Exercises & Biomechanics](#supported-exercises--biomechanics)
+- [System Architecture](#system-architecture)
+- [Privacy & Security](#privacy--security)
+- [Running Locally](#running-locally)
+- [Collaborator's Guide](#collaborators-guide)
+- [Roadmap & Next Steps](#roadmap--next-steps)
+- [Testing & Quality Assurance](#testing--quality-assurance)
+- [Deployment & Environments](#deployment--environments)
+- [API Reference](#api-reference)
+- [Project Structure & Configuration](#project-structure--configuration)
 
 ---
 
 ## How it works
 
 ```
-Webcam  →  MediaPipe PoseLandmarker (in-browser, GPU)
-                ↓
-        33 body keypoints  [x, y, z, visibility]
-                ↓
-        POST /prototype/assess   ← only keypoints cross the wire
-                ↓
-        FastAPI detector (Render)
-          • rep state machine
-          • form fault detection
-          • coaching cues
-                ↓
-        rep_count · phase · flags · coaching_cue  →  HUD overlay
+Webcam Video  →  MediaPipe PoseLandmarker (In-browser, WebGL / GPU)
+                      ↓
+              33 Body Landmarks  [x, y, z, visibility]
+                      ↓
+    ┌─────────────────┴─────────────────┐
+    ↓                                   ↓
+On-Device Kinematics Engine      Background Sync Engine
+  • Bicep curl 2D/3D tracking      • Session rolling (80% buffer)
+  • Forearm plank ground line      • POST /prototype/assess (JSON keypoints only)
+  • Zero-latency rep counter       • Render FastAPI detector
+  • Web Audio chimes & TTS         • Golden eval benchmarking
+    ↓                                   ↓
+HUD Overlay & Voice Audio        Long-term Stats & Rep Breakdown
 ```
 
-The pose model runs entirely inside the browser using WebAssembly + WebGL. The backend never receives video — it receives a compact array of 33 floating-point landmark coordinates per frame, typically ~600 bytes.
+The pose model runs entirely inside the browser using WebAssembly and WebGL. Video streams are never transmitted — only compact arrays of 33 floating-point coordinates (~600 bytes per frame) are processed for detection and optional session sync.
 
 ---
 
-## Features
+## Current Version Features (v5.0)
 
-### Movement Detection
-- **Real-time rep counting** — state-machine driven; counts are stable and don't flicker mid-rep
-- **Phase tracking** — reports the current phase of each exercise (e.g. *descent*, *hold*, *ascent*)
-- **Subject lock** — the detector locks onto the person in frame and tracks them across the session; the HUD shows a green "locked on you" / red "can't see you" pill in real time
-- **Session continuity** — a single set can span multiple server sessions without losing the rep count; the frontend rolls sessions automatically at 80% capacity
+### 🎨 Humanist Studio Luxury SaaS Design System
+- **2-Tab Layout**: Seamless switching between **Workouts** (exercise studio) and **Dashboard** (activity analytics).
+- **Centered Brand Identity**: Clean `.wordmark` brand placement with dynamic time-of-day greeting (*"Good morning"*, *"Good afternoon"*, *"Good evening"*).
+- **Minimalist Workout Cards**: Pure typography hierarchy displaying exercise titles, capsules (`REPS` vs `HOLD`), targeted muscle groups, and camera positioning guidance (SVG stickmen removed for a luxury aesthetic).
+- **GitHub-Style Contribution Heatmap**: Interactive, authentic monthly grid (`16px × 16px` tiles, `5px` gap, 4 intensity levels) with Monday–Sunday headers.
+- **Weekly Minutes Trend Chart**: Responsive SVG area and line chart tracking daily minutes with active date range badges.
+- **User Profile Management**: Top-right avatar dropdown on Dashboard opening an interactive modal to view and edit profile details (name, fitness goals, height, weight, experience level) with smooth saved-state feedback.
 
-### Form Analysis
-- **Fault detection** — flags biomechanical errors per rep (e.g. *knee_cave*, *forward_lean*, *elbow_flare*)
-- **Coaching cues** — plain-language corrective prompts shown live during the set
-- **Per-rep breakdown** — summary screen shows total reps, clean reps vs. flagged reps, and a tally of every fault with counts
+### 📐 Real-Time Biomechanics & Movement Analysis
+- **Bicep Curl (Front & Side Views)**:
+  - Supports both frontal and sagittal camera angles.
+  - Full range-of-motion validation: requires deep top flexion and complete bottom extension.
+  - Robust cheat rejection: invalidates straight-arm front raises, lateral raises, chicken-wing elbow flares, and foreshortened half-reps.
+- **Forearm Plank (Hold)**:
+  - Enforces strict horizontal bridge alignment across shoulders, spine, hips, knees, and ankles.
+  - Rejects push-ups and straight-arm high planks (requires forearms grounded with elbow angle $\approx 90^\circ$).
+  - **Dynamic Perspective Ground Clearance**: Computes the exact 2D floor line between forearms and toes. Rejects resting prone/sphinx poses (hips or knees on floor) as `broken` rather than `sag`.
+  - **Fixed Hip Height Baseline**: Records initial suspended hip height; vertical drift past threshold ($>0.10 \times \text{bodyLen}$) pauses the timer.
+  - **Hold Initiation Gating**: Timer only starts when user establishes clean, fully suspended form.
+- **Squats, Push-Ups & Lunges**:
+  - Instant on-device rep counting with zero latency and angle tracking.
 
-### Skeleton Overlay
-- **Full-body BlazePose wireframe** — 28-connection graph covering torso, full arms (shoulder → elbow → wrist → hand), and full legs (hip → knee → ankle → heel → toe)
-- **Confidence-aware rendering** — joints and bones fade with landmark visibility; occluded joints (e.g. feet when out of frame) are hidden rather than guessed at
-- **Canvas alignment** — the overlay canvas is kept in sync with the video element at all times, including when switching exercises without releasing the camera
+### 🔊 Audio & Voice Feedback System
+- **Female Voice Audio Output**: Built-in Web Speech API native synthesis speaking aloud *"Set completed!"* with automatic detection of platform female voices (iOS *Samantha*, Windows *Jenny/Zira*, Chrome *Google US English Female*).
+- **3-Stage Harmonic Fanfare**: Ascending triangle-wave chord progression (C5+G5 $\to$ E5+B5 $\to$ G5+C6) signaling set completion with resonant acoustic sustain.
+- **Form-Break Warning Tone**: Low dual tone (330 Hz $\to$ 260 Hz) sounding immediately when plank form breaks or the timer pauses to prevent wasted user energy.
 
-### UX & Performance
-- **Camera permission flow** — the permission prompt only appears when permission has not already been granted; subsequent exercise switches reuse the live stream without reinitialising hardware
-- **Server wake management** — Render's free tier spins down after idle; Kinetiq pre-warms the API when the picker loads and uses a non-blocking banner during the warm-up so you can start immediately
-- **Frame buffering with backoff** — frames accumulate locally during network hiccups and replay once the connection recovers; no reps are silently lost
-- **Progressive Web App** — installable, offline-capable shell; static assets are cached by a service worker
-- **Privacy overlay dismiss** — a manual dismiss button is always available if the overlay becomes stuck
-
----
-
-## Supported exercises
-
-| Exercise | File |
-|---|---|
-| Squat | `exercises/squat.json` |
-| Pushup | `exercises/pushup.json` |
-| Lunge | `exercises/lunge.json` |
-| Deadlift | `exercises/deadlift.json` |
-| Bicep Curl | `exercises/bicep_curl.json` |
-| Overhead Press | `exercises/overhead_press.json` |
-| Arnold Press | `exercises/arnold_press.json` |
-| Bench Press | `exercises/bench_press.json` |
-| Pull-up | `exercises/pull_up.json` |
-| Triceps Pushdown | `exercises/triceps_pushdown.json` |
-| Hamstring Curl | `exercises/hamstring_curl.json` |
-| Hanging Leg Raise | `exercises/hanging_leg_raise.json` |
-| Leg Raise | `exercises/leg_raise.json` |
-| Plank (hold) | `exercises/plank.json` |
-
-Each exercise file defines the joint landmarks, angle thresholds, rep phase boundaries, and fault rules used by the detector — no code changes are needed to add a new exercise.
+### 📱 Camera HUD & Mobile Experience
+- **Camera Flip Toggle**: In-HUD button to toggle between front selfie camera and rear environment camera on mobile devices (`facingMode: user` $\leftrightarrow$ `environment`).
+- **Pixel-Perfect Canvas Sync**: Overlay canvas styled with `object-fit: cover` to prevent coordinate drift across different aspect ratios.
+- **Live Guidance Pills & Lock Pill**: Real-time feedback pills indicating tracking status (*"locked on you"*, *"can't see you"*), countdowns, and form cues.
 
 ---
 
-## Architecture
+## Supported Exercises & Biomechanics
+
+| Exercise | Mode | Primary Joints Tracked | Rejection Rules |
+|---|---|---|---|
+| **Bicep Curl** | Reps | Shoulder, Elbow, Wrist, Hip | Straight-arm raises, lateral raises, cheat curls, incomplete extension |
+| **Plank** | Hold | Shoulder, Elbow, Wrist, Hip, Knee, Ankle | Push-ups (arm $>120^\circ$), hips on floor, knees on floor, excessive drift |
+| **Squat** | Reps | Hip, Knee, Ankle | Incomplete depth ($>105^\circ$), incomplete lockout ($<155^\circ$) |
+| **Push-up** | Reps | Shoulder, Elbow, Wrist | Incomplete depth ($>100^\circ$), incomplete extension ($<150^\circ$) |
+| **Lunge** | Reps | Hip, Knee, Ankle | Incomplete knee flexion ($>105^\circ$), incomplete extension ($<150^\circ$) |
+
+---
+
+## System Architecture
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│  Cloudflare Workers  (worker.js + wrangler.jsonc)        │
-│                                                          │
-│   /health, /prototype/*  →  proxy  →  Render API        │
-│   /*                     →  ASSETS.fetch()               │
-│                              └─ frontend/ static files   │
-└─────────────────────────────────────────────────────────┘
-                              │
-                   same-origin requests
-                              │
-┌─────────────────────────────────────────────────────────┐
-│  Browser  (frontend/)                                    │
-│                                                          │
-│   index.html  ·  app.js  ·  styles.css  ·  config.js    │
-│   sw.js  (service worker, cache v4)                      │
-│   segments.js  (session rolling / rep aggregation)       │
-│                                                          │
-│   MediaPipe PoseLandmarker Lite  (GPU delegate)          │
-│   — runs entirely in WASM, no server involved —          │
-└─────────────────────────────────────────────────────────┘
-                              │
-                  POST /prototype/assess
-              (33 keypoints per frame, ~600 B)
-                              │
-┌─────────────────────────────────────────────────────────┐
-│  Render  (evals/gate0/prototype_api/)                    │
-│                                                          │
-│   FastAPI  ·  main.py                                    │
-│   ├─ validate_frame_schema (golden_loader.py)            │
-│   ├─ SessionBufferStore (in-memory, per-session)         │
-│   └─ run_detector (detector/adapter.py)                  │
-│        ├─ subject_lock.py                                │
-│        ├─ rep state machine                              │
-│        └─ fault rules (exercises/*.json)                 │
-└─────────────────────────────────────────────────────────┘
+┌────────────────────────────────────────────────────────────────────────┐
+│  Cloudflare Edge (Workers + Assets)                                    │
+│                                                                        │
+│   Production:  main branch   →  https://kinetiq.kinetiq.workers.dev    │
+│   Staging/Dev: dev branch    →  https://kinetiq-dev.workers.dev        │
+│                                                                        │
+│   /*                    →  ASSETS.fetch() (frontend/ static files)     │
+│   /health, /prototype/* →  Proxy to Render API (rewriting headers)     │
+└──────────────────────────────────┬─────────────────────────────────────┘
+                                   │
+                         Same-Origin HTTPS
+                                   │
+┌──────────────────────────────────┴─────────────────────────────────────┐
+│  Browser PWA (frontend/)                                               │
+│                                                                        │
+│   UI Layer:       index.html · styles.css · app.js (Design System)     │
+│   Offline Engine: sw.js (Cache Storage v4)                             │
+│   Vision Engine:  MediaPipe PoseLandmarker Lite (WebGL/GPU Delegate)   │
+│   Audio Engine:   Web Audio API (Fanfare/Tones) + Web Speech API (TTS) │
+│   Kinematics:     evaluatePlankPosture · evaluateBicepCurlLive         │
+│   Buffer Sync:    segments.js (Rolling set tracking)                   │
+└──────────────────────────────────┬─────────────────────────────────────┘
+                                   │
+                   POST /prototype/assess (JSON keypoints)
+                                   │
+┌──────────────────────────────────┴─────────────────────────────────────┐
+│  Render API Service (evals/gate0/prototype_api/)                       │
+│                                                                        │
+│   FastAPI Engine  (Python 3.10 / 3.11, Docker)                         │
+│   ├─ In-Memory Session Store (SessionBufferStore)                      │
+│   ├─ Keypoint Validator (golden_loader.py)                             │
+│   └─ Eval-Backed Detector (evals/gate0/detector/adapter.py)            │
+│        └─ Golden Test Fixtures (316 passing unit tests)                │
+└────────────────────────────────────────────────────────────────────────┘
 ```
-
-### Key design decisions
-
-- **One detector, two consumers.** `run_detector` in `evals/gate0/detector/adapter.py` is the single source of truth for rep counting and fault detection. The API wraps it; it never reimplements detection logic.
-- **Recompute-over-buffer.** The detector re-runs over the entire accumulated session buffer on every API call. This is intentionally simple for a prototype: O(frames so far) per call, bounded by `PROTOTYPE_SESSION_MAX_FRAMES`.
-- **Edge reverse proxy.** The Cloudflare Worker proxies `/health` and `/prototype/*` to Render, rewriting `Host` and `Origin` headers. The browser sees a single origin — no CORS, no mixed content.
-- **In-memory sessions.** Sessions are stored in process memory on Render. A single instance is pinned (`numInstances: 1`) so a user's frames are never split across two buffers.
 
 ---
 
-## Privacy
+## Privacy & Security
 
 > **Pixels never leave your device.**
 
-- The webcam feed is processed entirely by MediaPipe running in your browser.
-- Only 33 floating-point keypoints per frame are transmitted to the backend.
-- No images, video frames, or raw pixel data are ever sent over the network.
-- Every incoming request is validated against the frame schema before reaching the detector; any payload that isn't the expected `[x, y, z, visibility] × 33` structure is rejected with a `422`.
+1. **Client-Side Vision**: The camera feed is processed exclusively by MediaPipe in browser memory.
+2. **Zero Video Transmission**: No video, image frames, or canvas streams are ever uploaded or stored.
+3. **Payload Inspection**: The edge proxy and API accept only validated 33-point keypoint arrays (`[x, y, z, visibility] × 33`). Any malformed payload is rejected with HTTP `422`.
+4. **Local Hardware Ownership**: Camera streams are paused when navigating away and fully stopped upon session exit or tab closure.
 
 ---
 
-## Running locally
+## Running Locally
 
 ### Prerequisites
+- **Node.js**: v18.0.0 or later (v20+ recommended)
+- **Python**: 3.10 or 3.11 (only if running the optional Python eval API locally)
+- **Wrangler**: Cloudflare CLI (`npm install -g wrangler` or via `npx wrangler`)
 
-| Tool | Version |
-|---|---|
-| Python | 3.10 or 3.11 |
-| Node.js | 18 or later (for tests) |
-| pip | latest |
-
-> You do **not** need Node.js to run the app — only for running the frontend unit tests.
-
-### 1 — Clone the repo
-
+### 1. Clone the Repository
 ```bash
 git clone https://github.com/kinetiq-app/kinetiq.git
 cd kinetiq
 ```
 
-### 2 — Install Python dependencies
-
+### 2. Install Frontend Dependencies
 ```bash
-pip install -r evals/gate0/prototype_api/requirements.txt
+cd frontend
+npm install
+cd ..
 ```
 
-### 3 — Start the API
-
+### 3. Run with Wrangler (Recommended)
+Running Wrangler emulates Cloudflare Workers and static asset bindings locally:
 ```bash
-cd evals/gate0
-uvicorn prototype_api.main:app --host 0.0.0.0 --port 8000 --reload
+npx wrangler dev
+```
+Open the local URL displayed (typically `http://localhost:8787`).
+
+---
+
+## Collaborator's Guide
+
+We welcome contributions to Kinetiq! To ensure codebase stability and clean deployments, follow this branching and development guide.
+
+### Branch Structure
+
+| Branch | Purpose | Deployment Target | Access Policy |
+|---|---|---|---|
+| **`main`** | Production release branch | `kinetiq.workers.dev` (Production) | Protected; merged only from `dev` |
+| **`dev`** | Primary active development & integration | `kinetiq-dev.workers.dev` (Staging) | Active working branch |
+| **`test`** | Sandbox mirror of `dev` for peer testing | Testing / Peer Review | Sandboxed collaboration |
+| **`feature/*`** | Specific feature or bugfix branches | Local dev environments | Branch off `dev`, PR to `dev` |
+
+### Setting Up Specific Branches Locally
+
+#### Work on the `dev` branch:
+```bash
+git fetch origin
+git checkout dev
+git pull origin dev
 ```
 
-The API will be available at `http://localhost:8000`. Verify it is up:
-
+#### Work on or test the `test` branch:
 ```bash
-curl http://localhost:8000/health
-# {"status":"ok","session_max_frames":3600, ...}
+git fetch origin
+git checkout test
+git pull origin test
 ```
 
-### 4 — Serve the frontend
+#### Create a new feature branch:
+Always branch off the latest `dev`:
+```bash
+git fetch origin
+git checkout dev
+git pull origin dev
+git checkout -b feature/your-feature-name
+```
 
-The frontend is plain static HTML/JS — any static file server works.
+### Pre-Commit Checklist & Quality Gates
+Before committing and submitting a pull request, ensure all tests pass:
 
-**Option A — Python's built-in server (simplest)**
+1. **Run Unit Tests**:
+   ```bash
+   cd frontend
+   npm test
+   ```
+   *All 38 test suites in `segments.test.mjs` and `kinematics.test.mjs` must pass with 0 failures.*
+
+2. **Commit Message Conventions**:
+   Follow conventional commits:
+   - `feat(...)`: New feature or capability
+   - `fix(...)`: Bug fix or threshold adjustment
+   - `docs(...)`: Documentation or guide updates
+   - `test(...)`: Adding or updating test cases
+   - `refactor(...)`: Code cleanup without functional change
+
+3. **Submitting a Pull Request**:
+   - Push your feature branch: `git push -u origin feature/your-feature-name`
+   - Open a PR targeting **`dev`** (do not target `main` directly).
+   - Once verified and approved on `dev`, release tags are merged into `main`.
+
+---
+
+## Roadmap & Next Steps
+
+### 1. User Profiles & Cloud Persistence
+- **Cloudflare D1 / KV Database Integration**:
+  - Replace purely local storage with lightweight SQLite on Cloudflare D1.
+  - Seamless authentication (magic link / OAuth).
+  - Sync user profiles (height, weight, fitness goals, preferences) across devices.
+  - Persistent workout history logs and metrics tracking.
+
+### 2. Social & Friends Competition
+- **Friend Connections**: Search and add friends via username, QR code, or invite links.
+- **Asynchronous Challenges**:
+  - Challenge friends to weekly workouts (e.g. *60-Second Plank Challenge*, *50 Clean Squats*).
+  - Ghost mode: compete against a friend's recorded rep timeline in real time.
+- **Head-to-Head & Leaderboards**:
+  - Weekly leaderboard ranking by volume and clean form consistency.
+  - Activity feed celebrating PRs, streaks, and completed sets.
+
+### 3. Tier Level Gamification System
+- **Tier Hierarchy**:
+  - 🥉 **Bronze**: Beginner / Onboarding (0 – 499 Form XP)
+  - 🥈 **Silver**: Consistent Practitioner (500 – 1,999 Form XP)
+  - 🥇 **Gold**: Form Disciplined (2,000 – 4,999 Form XP)
+  - 💎 **Platinum**: Advanced Athlete (5,000 – 9,999 Form XP)
+  - ⚡ **Kinetiq Elite**: Master of Biomechanics (10,000+ Form XP)
+- **Form-Weighted Scoring**:
+  - Clean reps award $1.5\times$ XP; reps with flagged faults reduce XP to incentivize correct technique over reckless speed.
+  - Tier badges displayed in the dashboard header, profile modal, and competitive leaderboards.
+  - Unlocks exclusive HUD themes and advanced biomechanical analytics.
+
+---
+
+## Testing & Quality Assurance
+
+### Frontend Test Runner (Node.js)
+Tests session segment rolling, queue bounding, kinematics angle calculations, and error rejection rules:
 
 ```bash
 cd frontend
-python -m http.server 3000
+npm test
 ```
 
-Open `http://localhost:3000` in your browser.
+**Test Coverage**:
+- `segments.test.mjs`: Buffer roll points, session capping, multi-segment rep continuity.
+- `kinematics.test.mjs`:
+  - Forearm plank posture, push-up rejection, 90° elbow constraints.
+  - Dynamic ground line clearance (hips/knees on floor rejection).
+  - Bicep curl 2D/3D flexion, lateral raise rejection, cheat curl rejection.
+  - Hip baseline drift threshold handling.
 
-**Option B — Wrangler (matches production behaviour exactly)**
+**Current Test Status**: **38 / 38 passing ($100\%$ pass rate)**.
 
+### Backend Python Evals (Optional)
 ```bash
-# Install Wrangler globally if you haven't already
-npm install -g wrangler
-
-# From the repo root
-npx wrangler dev
+python -m unittest discover -s evals/gate0 -p "test_*.py"
+# 316 detector unit tests
 ```
-
-This runs the Cloudflare Worker locally, proxying API routes to `http://localhost:8000` automatically if `API` resolves to the same-origin. Open the URL printed by Wrangler (typically `http://localhost:8787`).
-
-> **Note:** When running via `python -m http.server`, the frontend auto-detects `localhost` as same-origin and routes API calls to `window.location.origin`. Since the API is on port 8000 and the frontend is on port 3000, you will need to either use Wrangler (option B) or temporarily set `API_BASE_URL` in `frontend/config.js` to `"http://localhost:8000"`.
-
-### 5 — Open the app
-
-1. Allow camera access when prompted.
-2. Choose an exercise from the picker.
-3. Stand back so your full body is in frame.
-4. Start moving — reps, phase, and coaching cues appear in real time.
 
 ---
 
-## Deployment
+## Deployment & Environments
 
-The production stack is:
+### Environments in `wrangler.jsonc`
 
-| Layer | Service | Config |
-|---|---|---|
-| Frontend + edge proxy | Cloudflare Workers | `wrangler.jsonc`, `worker.js` |
-| Detector API | Render (free tier, Docker) | `render.yaml`, `evals/gate0/prototype_api/Dockerfile` |
-
-### Deploying to Cloudflare Workers
-
-```bash
-npx wrangler deploy
+```jsonc
+{
+  "name": "kinetiq",
+  "main": "worker.js",
+  "compatibility_date": "2024-09-23",
+  "assets": {
+    "directory": "frontend",
+    "binding": "ASSETS"
+  },
+  "env": {
+    "dev": {
+      "name": "kinetiq-dev",
+      "observability": {
+        "enabled": true
+      },
+      "assets": {
+        "directory": "frontend",
+        "binding": "ASSETS"
+      }
+    }
+  }
+}
 ```
 
-Wrangler reads `wrangler.jsonc` at the repo root, bundles `worker.js`, and uploads `frontend/` as static assets. The build runs automatically on every push to `main` via the GitHub integration configured in the Cloudflare dashboard.
-
-### Deploying the API to Render
-
-Render picks up `render.yaml` at the repo root and builds the Docker image defined in `evals/gate0/prototype_api/Dockerfile`. No manual steps are needed after the initial wiring:
-
-1. Connect the `kinetiq-app/kinetiq` GitHub repo in the Render dashboard.
-2. Render detects `render.yaml` and creates the `kinetiq-v5-api` service.
-3. Set the `PROTOTYPE_API_CORS_ORIGINS` environment variable in the Render dashboard to your Cloudflare Workers URL (e.g. `https://kinetiq.your-subdomain.workers.dev`).
-
-> **Free tier note:** Render's free tier spins down services after ~15 minutes of inactivity. Kinetiq automatically pre-warms the API when the picker loads and shows a non-blocking banner if the wake-up is still in progress.
+- **Production Deployment** (from `main`):
+  ```bash
+  npx wrangler deploy
+  ```
+- **Staging / Dev Deployment** (from `dev`):
+  ```bash
+  npx wrangler deploy --env dev
+  ```
 
 ---
 
-## API reference
+## API Reference
 
-Base URL (production): `https://kinetiq-v5-api.onrender.com`
+Base URL (Production API): `https://kinetiq-v5-api.onrender.com`
 
 ### `GET /health`
-
-Returns the server status and session configuration.
-
-**Response**
-```json
-{
-  "status": "ok",
-  "session_max_frames": 3600,
-  "supported_exercises": ["squat", "pushup", "lunge", ...]
-}
-```
+Returns server status and supported exercises.
 
 ### `POST /prototype/assess`
-
-Accepts a batch of keypoint frames and returns the current rep count, phase, detected faults, and a coaching cue.
-
-**Request body**
-```json
-{
-  "session_id": "sess-1234567890-abc123",
-  "exercise_id": "squat",
-  "reset": true,
-  "frames": [
-    {
-      "t_ms": 1234567,
-      "pose_model": "blazepose_33",
-      "people": [
-        {
-          "track_id": 0,
-          "kp": [[x, y, z, vis], ...],
-          "box": [x, y, w, h]
-        }
-      ]
-    }
-  ]
-}
-```
-
-- `reset: true` opens a fresh server session; send it on the first frame of every set.
-- `kp` is an array of 33 `[x, y, z, visibility]` tuples in BlazePose landmark order (MediaPipe output).
-- `box` is the bounding box `[x, y, width, height]` in normalised coordinates, derived from visible landmarks.
-
-**Response**
-```json
-{
-  "rep_count": 5,
-  "phase": "descent",
-  "subject_lock_ok": true,
-  "current_flags": ["knee_cave"],
-  "coaching_cue": "Drive your knees out",
-  "reps": [
-    { "rep_index": 1, "flags": [] },
-    { "rep_index": 2, "flags": ["knee_cave"] }
-  ]
-}
-```
-
-| Field | Description |
-|---|---|
-| `rep_count` | Total completed reps this session |
-| `phase` | Current phase of the movement |
-| `subject_lock_ok` | Whether the detector is tracking the user |
-| `current_flags` | Active form faults in the current rep |
-| `coaching_cue` | Plain-language correction (null if form is clean) |
-| `reps` | Per-rep record with flags for the summary screen |
+Accepts a batch of keypoint frames and returns rep counts, active phase, detected faults, and real-time coaching cues.
 
 ---
 
-## Testing
-
-### Frontend unit tests (Node.js)
-
-Tests the session rolling and frame-queue logic in `segments.js`.
-
-```bash
-node --test frontend/segments.test.mjs
-```
-
-Expected: **10/10 pass**.
-
-### Backend unit tests (Python)
-
-```bash
-# Full eval harness — detector, scorers, golden fixtures
-python -m unittest discover -s evals/gate0 -p "test_*.py"
-# Expected: 316 tests, 0 failures
-
-# API-layer tests only
-python -m unittest discover -s evals/gate0/prototype_api -p "test_*.py"
-# Expected: 53 tests, 0 failures
-```
-
-### Manual smoke test
-
-```bash
-# Check the API is up
-curl https://kinetiq-v5-api.onrender.com/health
-
-# Send a minimal frame (replace with real keypoint values)
-curl -X POST https://kinetiq-v5-api.onrender.com/prototype/assess \
-  -H "Content-Type: application/json" \
-  -d '{
-    "session_id": "smoke-test-1",
-    "exercise_id": "squat",
-    "reset": true,
-    "frames": []
-  }'
-```
-
----
-
-## Project structure
+## Project Structure & Configuration
 
 ```
 kinetiq/
-├── worker.js                        # Cloudflare Worker — edge proxy + static asset handler
-├── wrangler.jsonc                   # Cloudflare Workers config
-├── render.yaml                      # Render Blueprint (API service)
+├── worker.js                     # Cloudflare Worker edge proxy & asset fetcher
+├── wrangler.jsonc                # Cloudflare environments (prod & dev)
+├── render.yaml                   # Render deployment blueprint
+├── README.md                     # Comprehensive architecture & developer guide
 │
-├── frontend/                        # Camera PWA (static, no build step)
-│   ├── index.html                   # App shell — picker · live · summary screens
-│   ├── app.js                       # Main app logic: camera, pose loop, skeleton, flush
-│   ├── config.js                    # Runtime config (API URL, intervals, model name)
-│   ├── segments.js                  # Session rolling and rep aggregation across segments
-│   ├── styles.css                   # UI styles
-│   ├── sw.js                        # Service worker — offline shell, cache v4
-│   ├── severities.json              # Fault → severity mapping (high / med / low)
-│   ├── segments.test.mjs            # Node.js unit tests for segments.js
-│   └── .assetsignore                # Prevents worker files from being uploaded as assets
+├── frontend/                     # Progressive Web App
+│   ├── index.html                # App shell, navigation tabs & modals
+│   ├── app.js                    # Core logic: kinematics, audio, HUD, camera
+│   ├── config.js                 # Runtime API configuration & roll thresholds
+│   ├── segments.js               # Session rolling & rep aggregations
+│   ├── styles.css                # Humanist Studio Luxury design styles
+│   ├── sw.js                     # PWA Service Worker (cache v4)
+│   ├── severities.json           # Biomechanical fault severity rankings
+│   ├── segments.test.mjs         # Unit tests for session rolling
+│   ├── kinematics.test.mjs       # Unit tests for movement kinematics & planks
+│   └── package.json              # Test scripts & project metadata
 │
-├── evals/gate0/
-│   ├── detector/                    # Eval-validated rep counter and fault detector
-│   │   ├── adapter.py               # run_detector() — single entry point for all consumers
-│   │   ├── exercise_signals.py      # Maps exercise IDs to signal definitions
-│   │   ├── subject_lock.py          # Cross-frame person tracking
-│   │   └── ...
-│   ├── prototype_api/               # FastAPI wrapper around the detector
-│   │   ├── main.py                  # App, CORS, /health, /prototype/assess
-│   │   ├── schemas.py               # Pydantic request/response models
-│   │   ├── session_buffer.py        # In-memory per-session frame store
-│   │   ├── cues.py                  # Interim coaching cue lookup
-│   │   ├── Dockerfile               # Docker build (context = repo root)
-│   │   └── requirements.txt
-│   ├── golden_loader.py             # Golden fixture loader + validate_frame_schema
-│   └── test_*.py                    # 316 unit tests
+├── evals/gate0/                  # Detector evaluation suite
+│   ├── detector/                 # Rep state machines & signal definitions
+│   └── prototype_api/            # FastAPI wrapper service
 │
-└── exercises/                       # Exercise definitions (JSON)
-    ├── squat.json
-    ├── pushup.json
-    ├── lunge.json
-    └── ...                          # 14 exercises total
+└── exercises/                    # 14 exercise definitions (JSON)
 ```
 
 ---
 
-## Configuration
+## License
 
-All frontend runtime config lives in [`frontend/config.js`](frontend/config.js):
-
-| Key | Default | Description |
-|---|---|---|
-| `API_BASE_URL` | `https://kinetiq-v5-api.onrender.com` | Detector API origin. Overridden at runtime when the app is served from `localhost`, `*.workers.dev`, or `*.pages.dev` — same-origin routing kicks in automatically. |
-| `POST_INTERVAL_MS` | `400` | How often buffered keypoint frames are flushed to the API (ms). |
-| `POSE_MODEL` | `"blazepose_33"` | Landmark format tag; must match the detector's `keypoint_map.py`. |
-| `SESSION_ROLL_AT` | `0.8` | Roll to a fresh server session when the buffer reaches 80% of the server's frame cap. |
-| `SESSION_FORCE_ROLL_AT` | `0.95` | Force a session roll at 95% even mid-rep, to avoid an unrecoverable 413. |
-
-Backend configuration is set via environment variables on Render:
-
-| Variable | Description |
-|---|---|
-| `PROTOTYPE_API_CORS_ORIGINS` | Comma-separated list of allowed CORS origins (e.g. your Cloudflare Workers URL). Defaults to `*`. |
-
----
-
-## Live URL
-
-The latest build is deployed at the Cloudflare Workers URL connected to the `kinetiq-app/kinetiq` GitHub repo. Every push to `main` triggers an automatic redeploy.
+Copyright © 2026 Kinetiq Team. All rights reserved.
