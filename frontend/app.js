@@ -1053,13 +1053,115 @@ function playBeep(freq = 440, duration = 0.12) {
   } catch {}
 }
 
-// Crisp ascending 3-tone finish chime (C5 -> E5 -> G5) to signal set completion across all exercises
-function playFinishSound() {
+// Pre-warm Web Speech API voices
+if (typeof window !== "undefined" && "speechSynthesis" in window) {
   try {
-    playBeep(523.25, 0.10);
-    setTimeout(() => playBeep(659.25, 0.10), 120);
-    setTimeout(() => playBeep(783.99, 0.28), 240);
+    window.speechSynthesis.getVoices();
+    window.speechSynthesis.onvoiceschanged = () => {
+      try { window.speechSynthesis.getVoices(); } catch {}
+    };
   } catch {}
+}
+
+// Find a natural female voice across iOS, Android, macOS, and Windows
+function getFemaleVoice() {
+  if (typeof window === "undefined" || !("speechSynthesis" in window)) return null;
+  const voices = window.speechSynthesis.getVoices();
+  if (!voices || voices.length === 0) return null;
+
+  // Well-known female voice names across platforms:
+  // - iOS / macOS: Samantha, Victoria, Karen, Moira, Tessa, Serena
+  // - Windows / Edge: Jenny, Aria, Zira, Michelle, Sonia
+  // - Android / Chrome: Google US English Female
+  const preferredFemaleNames = [
+    "jenny", "aria", "samantha", "zira", "karen", "victoria",
+    "moira", "fiona", "tessa", "allison", "ava", "susan",
+    "serena", "stephanie", "zoe", "clara", "helena"
+  ];
+
+  // 1. Look for English voice with preferred female name
+  for (const name of preferredFemaleNames) {
+    const found = voices.find(
+      (v) => v.name.toLowerCase().includes(name) && v.lang.toLowerCase().startsWith("en")
+    );
+    if (found) return found;
+  }
+
+  // 2. Look for any English voice whose name or URI explicitly has "female"
+  const femaleVoice = voices.find(
+    (v) => (v.name.toLowerCase().includes("female") || (v.voiceURI && v.voiceURI.toLowerCase().includes("female"))) &&
+           v.lang.toLowerCase().startsWith("en")
+  );
+  if (femaleVoice) return femaleVoice;
+
+  // 3. Fallback to any voice with "female"
+  const anyFemale = voices.find((v) => v.name.toLowerCase().includes("female"));
+  if (anyFemale) return anyFemale;
+
+  // 4. Default to any English voice
+  return voices.find((v) => v.lang.toLowerCase().startsWith("en")) || null;
+}
+
+// Speaks a voice message using Web Speech API with a natural female voice
+function speakText(text) {
+  try {
+    if (typeof window === "undefined" || !("speechSynthesis" in window)) return;
+    window.speechSynthesis.cancel();
+    const u = new SpeechSynthesisUtterance(text);
+    u.rate = 1.02;
+    u.pitch = 1.18; // Warm, natural female pitch register
+    u.volume = 1.0;
+
+    const femaleVoice = getFemaleVoice();
+    if (femaleVoice) {
+      u.voice = femaleVoice;
+      u.lang = femaleVoice.lang;
+    } else {
+      u.lang = "en-US";
+    }
+
+    window.speechSynthesis.speak(u);
+  } catch {}
+}
+
+// Resonant, rich multi-tone finish chime + spoken "Set completed!" confirmation
+function playFinishSound(text = "Set completed!") {
+  try {
+    const AudioContextClass = typeof window !== "undefined" && (window.AudioContext || window.webkitAudioContext);
+    if (AudioContextClass) {
+      if (!audioCtx) audioCtx = new AudioContextClass();
+      if (audioCtx.state === "suspended") audioCtx.resume();
+
+      const playChord = (freqs, startOffset, dur) => {
+        const t0 = audioCtx.currentTime + startOffset;
+        freqs.forEach((f) => {
+          const osc = audioCtx.createOscillator();
+          const gain = audioCtx.createGain();
+          osc.type = "triangle"; // richer, warmer harmonics than pure sine
+          osc.frequency.setValueAtTime(f, t0);
+          gain.gain.setValueAtTime(0.32 / freqs.length, t0);
+          gain.gain.exponentialRampToValueAtTime(0.001, t0 + dur);
+          osc.connect(gain);
+          gain.connect(audioCtx.destination);
+          osc.start(t0);
+          osc.stop(t0 + dur);
+        });
+      };
+
+      // 3-stage ascending fanfare:
+      // 1. C5 (523Hz) + G5 (784Hz)
+      playChord([523.25, 783.99], 0, 0.16);
+      // 2. E5 (659Hz) + B5 (988Hz)
+      playChord([659.25, 987.77], 0.14, 0.16);
+      // 3. G5 (784Hz) + C6 (1046Hz) triumph chord
+      playChord([783.99, 1046.50], 0.28, 0.50);
+    }
+  } catch {}
+
+  // Speak clear audible voice notification as the chime finishes
+  setTimeout(() => {
+    speakText(text);
+  }, 240);
 }
 
 // Low double warning tone (330Hz -> 260Hz) to signal broken form & paused timer
@@ -2012,7 +2114,6 @@ function loop() {
         if (plankHoldActive) {
           plankBreakFrames++;
           if (plankBreakFrames > 35) {
-            playBeep(440, 0.35);
             stopSet();
             return;
           }
