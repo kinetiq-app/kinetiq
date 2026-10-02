@@ -768,4 +768,36 @@ test("Bicep Curl: bent-arm lateral raise (chicken-wing) does NOT register rep", 
   assert.equal(app.bicepCurlReps, 0, "Bent-arm lateral raise must not register a bicep curl rep");
 });
 
+test("Plank: 90° forearms with hips and knees on floor returns state: broken (not sag)", () => {
+  const app = loadAppSandbox();
+  const lm = createBaseLandmarks();
+
+  // User propped up on forearms (arm angle ~90° on floor), but resting prone with hips and knees on mat
+  lm[11] = { x: 0.25, y: 0.55, z: 0, visibility: 0.95 }; // shoulder
+  lm[13] = { x: 0.25, y: 0.70, z: 0, visibility: 0.95 }; // elbow on floor at 0.70 (arm angle ~90°)
+  lm[15] = { x: 0.35, y: 0.70, z: 0, visibility: 0.95 }; // wrist on floor at 0.70
+  lm[23] = { x: 0.50, y: 0.67, z: 0, visibility: 0.95 }; // hip resting on floor
+  lm[25] = { x: 0.65, y: 0.64, z: 0, visibility: 0.95 }; // knee resting on floor
+  lm[27] = { x: 0.80, y: 0.60, z: 0, visibility: 0.95 }; // ankle on floor
+
+  const res = app.evaluatePlankPosture(lm);
+  assert.equal(res.state, "broken", "Resting on floor with hips/knees down must be broken, not sag/adjusted form");
+});
+
+test("Plank: 90° forearms with hips on floor and knees straight returns state: broken (not sag)", () => {
+  const app = loadAppSandbox();
+  const lm = createBaseLandmarks();
+
+  // Forearms on floor at 90°, knees straight, but pelvis/hips collapsed onto mat
+  lm[11] = { x: 0.25, y: 0.55, z: 0, visibility: 0.95 }; // shoulder
+  lm[13] = { x: 0.25, y: 0.70, z: 0, visibility: 0.95 }; // elbow on floor
+  lm[15] = { x: 0.35, y: 0.70, z: 0, visibility: 0.95 }; // wrist on floor
+  lm[23] = { x: 0.50, y: 0.66, z: 0, visibility: 0.95 }; // hip collapsed onto floor (hipClearance <= 0)
+  lm[25] = { x: 0.65, y: 0.61, z: 0, visibility: 0.95 }; // knee straight
+  lm[27] = { x: 0.80, y: 0.60, z: 0, visibility: 0.95 }; // ankle
+
+  const res = app.evaluatePlankPosture(lm);
+  assert.equal(res.state, "broken", "Hips resting on floor must be broken, not sag");
+});
+
 

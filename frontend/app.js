@@ -1141,24 +1141,34 @@ function evaluatePlankPosture(lm, baselineHipY = null) {
 
   const bodyLen = Math.hypot(s.x - a.x, s.y - a.y) || 0.5;
 
-  // Ground plane reference:
-  // In a forearm plank, elbow (e) rests on the floor.
+  // Ground plane & perspective reference:
+  // In a forearm plank, forearms (e, w) and feet/toes (a) touch the floor.
   const armFloorY = Math.max(e.y, w.y);
   const armElevation = e.y - s.y;
   const torsoThighYSpread = Math.max(s.y, h.y, k?.y ?? h.y) - Math.min(s.y, h.y, k?.y ?? h.y);
 
+  // Dynamic floor line connecting forearm contact point (e.x, armFloorY) and foot contact point (a.x, a.y)
+  const dxGround = a.x - e.x;
+  const floorSlope = Math.abs(dxGround) > 0.05 ? (a.y - armFloorY) / dxGround : 0;
+  const groundYAtHip = armFloorY + floorSlope * (h.x - e.x);
+  const hipClearance = groundYAtHip - h.y; // Positive = suspended above floor; <= 0 = on/below floor
+
+  const kneeVis = k?.visibility ?? 0;
+  let kneeClearance = 0.10;
+  if (kneeVis >= 0.30) {
+    const groundYAtKnee = armFloorY + floorSlope * (k.x - e.x);
+    kneeClearance = groundYAtKnee - k.y;
+  }
+
   // 2. Detect exhaustion / lying flat on the floor:
-  // In a valid plank, chest/shoulders must be elevated by arms (armElevation >= 0.14).
-  // When resting on ground:
-  // - Arm elevation collapses (armElevation < 0.065) OR
-  // - Chest is not elevated (armElevation <= 0.13) AND torso/thighs are flat near floor level
-  const isFloorResting = armElevation < 0.065 || (
+  // Complete chest/torso collapse (armElevation < 0.065) or flat torso resting on ground
+  const isChestFlatOnFloor = armElevation < 0.065 || (
     armElevation <= 0.13 && (
       (torsoThighYSpread <= 0.048 && h.y >= armFloorY - 0.13) ||
       (h.y >= armFloorY - 0.075 && (k?.y ?? h.y) >= armFloorY - 0.075)
     )
   );
-  if (isFloorResting) {
+  if (isChestFlatOnFloor) {
     return { state: "broken", angle: 180, cue: "Resting on floor — press up into plank" };
   }
 
@@ -1194,57 +1204,66 @@ function evaluatePlankPosture(lm, baselineHipY = null) {
     }
   }
 
-  // 5. Straight Line Alignment: Shoulder, Back/Torso, Hips, Knees, and Ankles:
-  // Enforce straight leg alignment: calcAngleDeg(hip, knee, ankle) >= 155°
-  // AND ensure knees are not resting on the floor
-  const kneeVis = k?.visibility ?? 0;
-  if (kneeVis >= 0.30) {
-    const kneeAngle = calcAngleDeg(h, k, a);
-    const tk = (k.x - h.x) / (a.x - h.x || 0.0001);
-    const expectedKneeY = h.y + tk * (a.y - h.y);
-    const kneeSag = k.y - expectedKneeY;
-    const isKneeAtFloorLevel = (k.y >= armFloorY - 0.025) && (k.y >= a.y - 0.055 || k.y >= armFloorY - 0.01);
-
-    if (kneeAngle < 155.0 || kneeSag > 0.060 || isKneeAtFloorLevel) {
-      return {
-        state: "broken",
-        angle: calcAngleDeg(s, h, a),
-        cue: "Knees on floor — lift knees to full plank",
-      };
-    }
-  }
-
   // Torso / back alignment:
   const angle = calcAngleDeg(s, h, a);
   const t = (h.x - s.x) / (a.x - s.x || 0.0001);
   const lineY = s.y + t * (a.y - s.y);
   const diffY = h.y - lineY; // positive = hip sagging down toward floor; negative = hip piking up
 
-  // Severe hip deviation: hips sagging down near floor or piking high in inverted-V
-  if (diffY > 0.068 || (angle < 145.0 && diffY > 0)) {
+  // 5. Severe hip deviation: hips sagging down near floor or piking high in inverted-V
+  if (diffY > 0.055 || (angle < 145.0 && diffY > 0)) {
     return { state: "broken", angle, cue: "Hips sagging too low — straighten body" };
   }
 
-  if (diffY < -0.068 || (angle < 145.0 && diffY < 0)) {
+  if (diffY < -0.065 || (angle < 145.0 && diffY < 0)) {
     return { state: "broken", angle, cue: "Hips piked too high — lower to straight line" };
   }
 
-  // Perfect posture (Green)
-  if (angle >= 155.0 && angle <= 180.0 && Math.abs(diffY) <= 0.038) {
+  // 6. Knees on floor check:
+  // Enforce straight leg alignment: calcAngleDeg(hip, knee, ankle) >= 155°
+  // AND ensure knees are not resting on the floor
+  if (kneeVis >= 0.30) {
+    const kneeAngle = calcAngleDeg(h, k, a);
+    const tk = (k.x - h.x) / (a.x - h.x || 0.0001);
+    const expectedKneeY = h.y + tk * (a.y - h.y);
+    const kneeSag = k.y - expectedKneeY;
+    const isKneeAtFloorLevel = kneeClearance <= 0.020 * bodyLen || (k.y >= armFloorY - 0.025 && (k.y >= a.y - 0.055 || k.y >= armFloorY - 0.01));
+
+    if (kneeAngle < 155.0 || kneeSag > 0.060 || isKneeAtFloorLevel) {
+      return {
+        state: "broken",
+        angle,
+        cue: "Knees on floor — lift knees to full plank",
+      };
+    }
+  }
+
+  // 7. Explicit Hip and Lower Body Ground Clearance:
+  // Neither hips nor knees can touch or rest on the ground.
+  if (hipClearance <= 0.025 * bodyLen) {
+    return {
+      state: "broken",
+      angle,
+      cue: "Hips on floor — lift body into plank",
+    };
+  }
+
+  // 8. Perfect posture (Green)
+  if (angle >= 155.0 && angle <= 180.0 && Math.abs(diffY) <= 0.038 && hipClearance > 0.030 * bodyLen) {
     return { state: "good", angle, cue: "Great line — hold steady!" };
   }
 
-  // Mild hip sag (Yellow / Warn)
-  if (diffY > 0.035 || (angle < 155.0 && diffY > 0)) {
+  // 9. Mild hip sag (Yellow / Warn) — ONLY while body remains safely suspended above floor
+  if ((diffY > 0.035 || (angle < 155.0 && diffY > 0)) && hipClearance > 0.030 * bodyLen) {
     return { state: "sag", angle, cue: "Raise your hips to align with core" };
   }
 
-  // Mild hip pike (Yellow / Warn)
+  // 10. Mild hip pike (Yellow / Warn)
   if (diffY < -0.035 || (angle < 155.0 && diffY < 0)) {
     return { state: "pike", angle, cue: "Lower your hips to a straight line" };
   }
 
-  if (angle >= 145.0 && Math.abs(diffY) <= 0.045) {
+  if (angle >= 145.0 && Math.abs(diffY) <= 0.045 && hipClearance > 0.030 * bodyLen) {
     return { state: "good", angle, cue: "Good posture — keep holding" };
   }
 
@@ -1852,15 +1871,15 @@ function loop() {
         drawSkeleton(lmToUse, plankTheme);
 
         if (!plankHoldActive) {
-          // Automatic Start: starts automatically when user assumes a valid plank position
-          if (isDecentForm) {
+          // Automatic Start: starts automatically when user assumes a valid, suspended plank position
+          if (posture.state === "good") {
             steadyFrameCount++;
-            showGuidePill(posture.state === "good" ? "Starting hold!" : "Starting hold — adjust posture", true, "✓");
+            showGuidePill("Hold steady — starting hold!", true, "✓");
             if (steadyFrameCount >= 8) {
               plankHoldActive = true;
               holdStartTime = now;
               holdLastTickMs = now;
-              // Record baseline hip height
+              // Record baseline hip height from clean good posture
               const activeSideHip = (lmToUse[23]?.visibility ?? 0) >= (lmToUse[24]?.visibility ?? 0) ? lmToUse[23] : lmToUse[24];
               plankBaselineHipY = activeSideHip ? activeSideHip.y : null;
               plankWasFormBroken = false;
@@ -1871,7 +1890,10 @@ function loop() {
             }
           } else {
             steadyFrameCount = 0;
-            showGuidePill(posture.cue, false);
+            const startCue = (posture.state === "sag" || posture.state === "pike")
+              ? posture.cue
+              : (posture.cue || "Get into straight plank posture");
+            showGuidePill(startCue, false);
             $("hud-lock").className = "lock-pill lock-unknown";
             $("hud-lock").textContent = "get ready";
           }
