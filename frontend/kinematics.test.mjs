@@ -589,11 +589,11 @@ test("Bicep Curl: reversing upward from lowering phase without reaching bottom c
   assert.equal(app.bicepCurlReps, 1, "Exactly 1 rep counted after completing full range of motion");
 });
 
-test("Plank: perfect high plank on hands returns state: good", () => {
+test("Plank: push-up / straight-arm high plank on hands is rejected (requires forearm plank near 90°)", () => {
   const app = loadAppSandbox();
   const lm = createBaseLandmarks();
 
-  // High plank: pushup top position on palms
+  // High plank / push-up position on hands: arms extended, angle ~180°
   lm[11] = { x: 0.25, y: 0.40, z: 0, visibility: 0.95 }; // shoulder (0.40)
   lm[13] = { x: 0.25, y: 0.55, z: 0, visibility: 0.95 }; // elbow in air (0.55)
   lm[15] = { x: 0.25, y: 0.70, z: 0, visibility: 0.95 }; // hands on floor (0.70)
@@ -602,24 +602,37 @@ test("Plank: perfect high plank on hands returns state: good", () => {
   lm[27] = { x: 0.80, y: 0.60, z: 0, visibility: 0.95 }; // feet on floor (0.60)
 
   const res = app.evaluatePlankPosture(lm);
-  assert.equal(res.state, "good");
-  assert.match(res.cue, /great line/i);
+  assert.equal(res.state, "broken");
+  assert.match(res.cue, /forearms/i);
 });
 
-test("Plank: high plank with knees on floor triggers broken posture", () => {
+test("Plank: excessive vertical hip movement off baseline stops timer and triggers broken posture", () => {
   const app = loadAppSandbox();
   const lm = createBaseLandmarks();
 
-  lm[11] = { x: 0.25, y: 0.40, z: 0, visibility: 0.95 }; // shoulder
-  lm[13] = { x: 0.25, y: 0.55, z: 0, visibility: 0.95 }; // elbow in air
-  lm[15] = { x: 0.25, y: 0.70, z: 0, visibility: 0.95 }; // hands on floor
-  lm[23] = { x: 0.50, y: 0.55, z: 0, visibility: 0.95 }; // hip
-  lm[25] = { x: 0.65, y: 0.70, z: 0, visibility: 0.95 }; // knee resting on floor at 0.70
-  lm[27] = { x: 0.80, y: 0.60, z: 0, visibility: 0.95 }; // feet
+  // Standard forearm plank position
+  lm[11] = { x: 0.25, y: 0.55, z: 0, visibility: 0.95 }; // shoulder
+  lm[13] = { x: 0.25, y: 0.70, z: 0, visibility: 0.95 }; // elbow
+  lm[15] = { x: 0.35, y: 0.70, z: 0, visibility: 0.95 }; // wrist
+  lm[23] = { x: 0.50, y: 0.57, z: 0, visibility: 0.95 }; // hip at baseline (0.57)
+  lm[25] = { x: 0.65, y: 0.58, z: 0, visibility: 0.95 }; // knee
+  lm[27] = { x: 0.80, y: 0.60, z: 0, visibility: 0.95 }; // ankle
 
-  const res = app.evaluatePlankPosture(lm);
-  assert.equal(res.state, "broken");
-  assert.match(res.cue, /knees on floor/i);
+  // 1. With hip at baseline (0.57), posture is good
+  const initial = app.evaluatePlankPosture(lm, 0.57);
+  assert.equal(initial.state, "good");
+
+  // 2. Hip sags / drops significantly below baseline (y = 0.66, drift = 0.09 with bodyLen ~0.55)
+  lm[23].y = 0.66;
+  const sagRes = app.evaluatePlankPosture(lm, 0.57);
+  assert.equal(sagRes.state, "broken");
+  assert.match(sagRes.cue, /baseline/i);
+
+  // 3. Hip pikes / raises significantly above baseline (y = 0.48)
+  lm[23].y = 0.48;
+  const pikeRes = app.evaluatePlankPosture(lm, 0.57);
+  assert.equal(pikeRes.state, "broken");
+  assert.match(pikeRes.cue, /baseline/i);
 });
 
 test("Plank: exhausted user resting flat on floor with arms forward (e.y = 0.87) triggers broken posture", () => {

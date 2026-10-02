@@ -83,6 +83,8 @@ let holdLastTickMs = null;
 let plankHoldActive = false;
 let plankBreakFrames = 0;
 let plankDominantFaults = {};
+let plankBaselineHipY = null;
+let plankWasFormBroken = false;
 
 // Bicep Curl on-device tracking state (supports front & side view rep counting)
 let bicepCurlReps = 0;
@@ -1051,6 +1053,23 @@ function playBeep(freq = 440, duration = 0.12) {
   } catch {}
 }
 
+// Crisp ascending 3-tone finish chime (C5 -> E5 -> G5) to signal set completion across all exercises
+function playFinishSound() {
+  try {
+    playBeep(523.25, 0.10);
+    setTimeout(() => playBeep(659.25, 0.10), 120);
+    setTimeout(() => playBeep(783.99, 0.28), 240);
+  } catch {}
+}
+
+// Low double warning tone (330Hz -> 260Hz) to signal broken form & paused timer
+function playErrorTone() {
+  try {
+    playBeep(330, 0.10);
+    setTimeout(() => playBeep(260, 0.18), 110);
+  } catch {}
+}
+
 // ---------------------------------------------------------------------------
 // 2D angle calculation helper (angle at vertex b in degrees)
 function calcAngleDeg(a, b, c) {
@@ -1084,8 +1103,8 @@ function formatHoldTime(ms) {
 // ---------------------------------------------------------------------------
 // Real-time Plank (hold) posture evaluator
 // Analyzes vector alignment between Shoulder, Hip, Knee, and Ankle.
-// Detects exhaustion/lying flat, bent-knee planks, and severe vs mild sag/pike.
-function evaluatePlankPosture(lm) {
+// Detects pushups vs forearm plank, exhaustion/lying flat, bent knees, and fixed hip height.
+function evaluatePlankPosture(lm, baselineHipY = null) {
   if (!lm || lm.length < 33) return { state: "broken", angle: 0, cue: "Can't see body" };
 
   const ls = lm[11], rs = lm[12]; // shoulders
@@ -1111,7 +1130,7 @@ function evaluatePlankPosture(lm) {
     return { state: "broken", angle: 0, cue: "Step back into view" };
   }
 
-  // Orientation check: in a plank, body must be roughly horizontal
+  // 1. Orientation check: body must be roughly horizontal
   const dx = Math.abs(s.x - a.x);
   const dy = Math.abs(s.y - a.y);
   const isHorizontal = dx > dy * 0.55 && dx >= 0.12;
@@ -1120,31 +1139,64 @@ function evaluatePlankPosture(lm) {
     return { state: "broken", angle: 0, cue: "Get down into plank posture" };
   }
 
+  const bodyLen = Math.hypot(s.x - a.x, s.y - a.y) || 0.5;
+
   // Ground plane reference:
-  // In a forearm plank, elbow (e) rests on the floor. In a high plank (palms), wrist (w) rests on floor.
-  const isHighPlank = (w.y >= e.y + 0.06);
-  const armFloorY = isHighPlank ? w.y : Math.max(e.y, w.y);
-  const armElevation = Math.max(e.y - s.y, (w.y - s.y) * 0.65);
+  // In a forearm plank, elbow (e) rests on the floor.
+  const armFloorY = Math.max(e.y, w.y);
+  const armElevation = e.y - s.y;
   const torsoThighYSpread = Math.max(s.y, h.y, k?.y ?? h.y) - Math.min(s.y, h.y, k?.y ?? h.y);
 
-  // 1. Detect exhaustion / lying flat on the floor:
-  // In a valid plank, chest/shoulders must be elevated by arms (forearms or hands: armElevation >= 0.14).
-  // When resting on the ground (torso and thighs touching or resting flat on the floor):
+  // 2. Detect exhaustion / lying flat on the floor:
+  // In a valid plank, chest/shoulders must be elevated by arms (armElevation >= 0.14).
+  // When resting on ground:
   // - Arm elevation collapses (armElevation < 0.065) OR
-  // - Chest is not elevated (armElevation < 0.14) AND torso/thighs are flat near floor level
-  const isFloorResting = armElevation < 0.14 && (
-    (torsoThighYSpread <= 0.048 && h.y >= armFloorY - 0.12) ||
-    (h.y >= armFloorY - 0.075 && (k?.y ?? h.y) >= armFloorY - 0.075)
+  // - Chest is not elevated (armElevation <= 0.13) AND torso/thighs are flat near floor level
+  const isFloorResting = armElevation < 0.065 || (
+    armElevation <= 0.13 && (
+      (torsoThighYSpread <= 0.048 && h.y >= armFloorY - 0.13) ||
+      (h.y >= armFloorY - 0.075 && (k?.y ?? h.y) >= armFloorY - 0.075)
+    )
   );
-  const isLyingFlat = armElevation < 0.065 || isFloorResting;
-
-  if (isLyingFlat) {
+  if (isFloorResting) {
     return { state: "broken", angle: 180, cue: "Resting on floor — press up into plank" };
   }
 
-  // 2. Alignment & Bent knee / knee-down plank detection:
+  // 3. Reject Pushups & Straight-arm High Planks:
+  // In a valid forearm plank:
+  // - The arm angle (shoulder -> elbow -> wrist) must be near 90° (constant angle: 65° to 118°).
+  // - The elbow (e) and wrist (w) must rest at approximately ground level.
+  // In a pushup: arms are extended (angle 150°-180°), or elbows are elevated high above wrists.
+  const armVis = Math.min(s.visibility ?? 0, e.visibility ?? 0, w.visibility ?? 0);
+  if (armVis >= 0.35) {
+    const armAngle = calcAngleDeg(s, e, w);
+    const isPushupArm = armAngle > 120.0 || (e.y < w.y - 0.08 * bodyLen);
+    if (isPushupArm) {
+      return {
+        state: "broken",
+        angle: calcAngleDeg(s, h, a),
+        cue: "Rest on forearms — bend elbows near 90°",
+      };
+    }
+  }
+
+  // 4. Fixed Hip Height & Threshold of Hip Movement:
+  // Hips should stay at a fixed height from the ground.
+  // Once a baseline is established, vertical hip drift beyond threshold (> 0.10 * bodyLen) stops timer as broken.
+  if (baselineHipY != null) {
+    const hipDrift = Math.abs(h.y - baselineHipY);
+    if (hipDrift > 0.10 * bodyLen) {
+      return {
+        state: "broken",
+        angle: calcAngleDeg(s, h, a),
+        cue: h.y > baselineHipY ? "Hips dropped below baseline — hold steady" : "Hips raised above baseline — hold steady",
+      };
+    }
+  }
+
+  // 5. Straight Line Alignment: Shoulder, Back/Torso, Hips, Knees, and Ankles:
   // Enforce straight leg alignment: calcAngleDeg(hip, knee, ankle) >= 155°
-  // AND ensure knees are not resting on the floor (knees at or below arm/floor level)
+  // AND ensure knees are not resting on the floor
   const kneeVis = k?.visibility ?? 0;
   if (kneeVis >= 0.30) {
     const kneeAngle = calcAngleDeg(h, k, a);
@@ -1162,39 +1214,37 @@ function evaluatePlankPosture(lm) {
     }
   }
 
-  // 3. Hip alignment and severe vs mild sag/pike classification
+  // Torso / back alignment:
   const angle = calcAngleDeg(s, h, a);
-
-  // Sag vs Pike deviation relative to line connecting shoulder and ankle
   const t = (h.x - s.x) / (a.x - s.x || 0.0001);
   const lineY = s.y + t * (a.y - s.y);
   const diffY = h.y - lineY; // positive = hip sagging down toward floor; negative = hip piking up
 
   // Severe hip deviation: hips sagging down near floor or piking high in inverted-V
-  if (diffY > 0.068 || (angle < 148.0 && diffY > 0)) {
+  if (diffY > 0.068 || (angle < 145.0 && diffY > 0)) {
     return { state: "broken", angle, cue: "Hips sagging too low — straighten body" };
   }
 
-  if (diffY < -0.068 || (angle < 148.0 && diffY < 0)) {
+  if (diffY < -0.068 || (angle < 145.0 && diffY < 0)) {
     return { state: "broken", angle, cue: "Hips piked too high — lower to straight line" };
   }
 
-  // Perfect posture
-  if (angle >= 158.0 && angle <= 180.0 && Math.abs(diffY) <= 0.038) {
+  // Perfect posture (Green)
+  if (angle >= 155.0 && angle <= 180.0 && Math.abs(diffY) <= 0.038) {
     return { state: "good", angle, cue: "Great line — hold steady!" };
   }
 
-  // Mild hip sag (warn/yellow)
-  if (diffY > 0.035 || (angle < 158.0 && diffY > 0)) {
+  // Mild hip sag (Yellow / Warn)
+  if (diffY > 0.035 || (angle < 155.0 && diffY > 0)) {
     return { state: "sag", angle, cue: "Raise your hips to align with core" };
   }
 
-  // Mild hip pike (warn/yellow)
-  if (diffY < -0.035 || (angle < 158.0 && diffY < 0)) {
+  // Mild hip pike (Yellow / Warn)
+  if (diffY < -0.035 || (angle < 155.0 && diffY < 0)) {
     return { state: "pike", angle, cue: "Lower your hips to a straight line" };
   }
 
-  if (angle >= 148.0 && Math.abs(diffY) <= 0.045) {
+  if (angle >= 145.0 && Math.abs(diffY) <= 0.045) {
     return { state: "good", angle, cue: "Good posture — keep holding" };
   }
 
@@ -1787,7 +1837,7 @@ function loop() {
         // ==========================================
         // ---- PLANK (HOLD) ENGINE ----
         // ==========================================
-        const posture = evaluatePlankPosture(lmToUse);
+        const posture = evaluatePlankPosture(lmToUse, plankHoldActive ? plankBaselineHipY : null);
         const isDecentForm = posture.state === "good" || posture.state === "sag" || posture.state === "pike";
 
         // Dynamic theme for plank wireframe:
@@ -1810,6 +1860,10 @@ function loop() {
               plankHoldActive = true;
               holdStartTime = now;
               holdLastTickMs = now;
+              // Record baseline hip height
+              const activeSideHip = (lmToUse[23]?.visibility ?? 0) >= (lmToUse[24]?.visibility ?? 0) ? lmToUse[23] : lmToUse[24];
+              plankBaselineHipY = activeSideHip ? activeSideHip.y : null;
+              plankWasFormBroken = false;
               playBeep(880, 0.2); // Start chime
               hideGuidePill();
               $("hud-lock").className = "lock-pill lock-ok";
@@ -1824,6 +1878,7 @@ function loop() {
         } else {
           // Active hold in progress
           if (isDecentForm) {
+            plankWasFormBroken = false;
             const dt = now - (holdLastTickMs || now);
             holdElapsedMs += dt;
             if (posture.state === "good") {
@@ -1843,7 +1898,11 @@ function loop() {
             $("rep-count").textContent = formatHoldTime(holdElapsedMs);
             plankBreakFrames = 0;
           } else {
-            // Posture broken (collapsed, knees on floor, or stood up)
+            // Posture broken (collapsed, pushup, hips moved, knees on floor, or stood up)
+            if (!plankWasFormBroken) {
+              plankWasFormBroken = true;
+              playErrorTone(); // immediate audio alert that form broke and timer paused
+            }
             plankBreakFrames++;
             $("phase").textContent = "FORM BROKEN";
             $("phase").className = "rep-phase bad";
@@ -1853,7 +1912,6 @@ function loop() {
 
             // Automatic Stop on exhaustion (>1.2s break)
             if (plankBreakFrames > 35) {
-              playBeep(440, 0.35); // finish tone
               stopSet();
               return;
             }
@@ -2323,6 +2381,8 @@ async function startSet(ex) {
     plankHoldActive = false;
     plankBreakFrames = 0;
     plankDominantFaults = {};
+    plankBaselineHipY = null;
+    plankWasFormBroken = false;
 
     bicepCurlReps = 0;
     bicepCurlArms = {
@@ -2430,6 +2490,9 @@ async function startSet(ex) {
 async function stopSet() {
   running = false;
   plankHoldActive = false;
+  plankBaselineHipY = null;
+  plankWasFormBroken = false;
+  playFinishSound();
   clearInterval(countdownTimer);
   countdownTimer = null;
   sessionPhase = "positioning";
