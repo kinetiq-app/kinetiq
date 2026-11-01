@@ -942,48 +942,6 @@ body { overflow: hidden; }
 .posture-meta-lbl { color: var(--muted); }
 .posture-meta-val { color: var(--text); font-variant-numeric: tabular-nums; }
 
-.posture-criteria-grid {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 8px;
-  margin-top: 8px;
-}
-.posture-criteria-item {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  padding: 8px;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-.criteria-top {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 4px;
-}
-.criteria-name {
-  font-size: 10px;
-  font-weight: 700;
-  color: var(--text);
-  line-height: 1.2;
-}
-.criteria-badge {
-  font-size: 10px;
-  font-weight: 700;
-  padding: 2px 5px;
-  border-radius: 999px;
-}
-.criteria-badge.good { background: var(--good-dim); color: var(--good); }
-.criteria-badge.warn { background: var(--warn-dim); color: var(--warn); }
-.criteria-badge.bad { background: var(--danger-dim); color: var(--danger); }
-.criteria-desc {
-  font-size: 9.5px;
-  color: var(--muted);
-  line-height: 1.2;
-}
-
 /* Plank Setup Modal */
 .plank-setup-card {
   text-align: left;

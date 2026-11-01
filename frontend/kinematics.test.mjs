@@ -877,5 +877,18 @@ test("Plank: straight arms (>128°) in pushup stance triggers red / broken state
   assert.match(res.cue, /forearms/i);
 });
 
+test("Plank timing: formatHoldTime handles negative, zero, and standard durations safely", () => {
+  const app = loadAppSandbox();
+  assert.equal(app.formatHoldTime(-1793542410000), "0s");
+  assert.equal(app.formatHoldTime(-500), "0s");
+  assert.equal(app.formatHoldTime(0), "0s");
+  assert.equal(app.formatHoldTime(NaN), "0s");
+  assert.equal(app.formatHoldTime(null), "0s");
+  assert.equal(app.formatHoldTime(5000), "5s");
+  assert.equal(app.formatHoldTime(30000), "30s");
+  assert.equal(app.formatHoldTime(65000), "1:05");
+  assert.equal(app.formatHoldTime(120000), "2:00");
+});
+
 
 

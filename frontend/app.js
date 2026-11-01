@@ -661,9 +661,11 @@ function saveCurrentSession() {
     else if (exercise === "squat") exerciseName = "Squat";
 
     if (isHoldExercise) {
-      const holdSeconds = Math.round(holdElapsedMs / 1000);
+      const holdSeconds = Math.max(0, Math.round(holdElapsedMs / 1000));
       if (holdSeconds < 2) return;
-      const cleanPercentage = holdElapsedMs > 0 ? Math.round((holdGoodMs / holdElapsedMs) * 100) : 0;
+      const safeGoodMs = Math.max(0, holdGoodMs);
+      const totalTracked = (safeGoodMs + Math.max(0, holdWarnMs) + Math.max(0, holdBadMs)) || Math.max(1, holdElapsedMs);
+      const cleanPercentage = Math.min(100, Math.max(0, Math.round((safeGoodMs / totalTracked) * 100)));
       saveWorkoutSession({
         id: `wk-${timestamp}`,
         exerciseId: exercise || "plank",
@@ -1203,7 +1205,8 @@ function calcAngle3DDeg(a, b, c) {
 
 // Format milliseconds into MM:SS or Xs for clean display
 function formatHoldTime(ms) {
-  const totalSecs = Math.floor(ms / 1000);
+  const safeMs = Math.max(0, Number(ms) || 0);
+  const totalSecs = Math.floor(safeMs / 1000);
   const mins = Math.floor(totalSecs / 60);
   const secs = totalSecs % 60;
   return mins > 0 ? `${mins}:${secs.toString().padStart(2, "0")}` : `${secs}s`;
@@ -2016,21 +2019,17 @@ function beginActiveWorkout() {
 
   if (exercise === "plank") {
     plankHoldActive = true;
-    holdStartTime = Date.now();
-    holdLastTickMs = Date.now();
+    holdStartTime = performance.now();
+    holdLastTickMs = performance.now();
     holdElapsedMs = 0;
     holdGoodMs = 0;
     holdWarnMs = 0;
     holdBadMs = 0;
+    plankBreakFrames = 0;
     plankDominantFaults = {};
-    plankPostureStats = {
-      alignment: { goodMs: 0, warnMs: 0, badMs: 0 },
-      knees: { goodMs: 0, badMs: 0 },
-      elbows: { goodMs: 0, warnMs: 0, badMs: 0 },
-    };
-    $("rep-count").textContent = `00:00 / ${formatHoldTime(plankTargetSeconds * 1000)}`;
-    $("rep-unit").textContent = `TARGET ${plankTargetSeconds}s`;
-    $("phase").textContent = "TRACKING POSTURE";
+    $("rep-count").textContent = "0s";
+    $("rep-unit").textContent = `/ ${formatHoldTime(plankTargetSeconds * 1000)}`;
+    $("phase").textContent = "HOLDING PLANK";
     $("phase").className = "rep-phase";
     $("hud-lock").className = "lock-pill lock-ok";
     $("hud-lock").textContent = "holding plank";
@@ -2082,9 +2081,14 @@ function loop() {
         drawSkeleton(lmToUse, plankTheme);
 
         if (sessionPhase === "active" && plankHoldActive) {
-          const dt = Math.min(now - (holdLastTickMs || now), 200);
+          if (holdLastTickMs == null) holdLastTickMs = now;
+          const dt = Math.max(0, Math.min(now - holdLastTickMs, 200));
           holdElapsedMs += dt;
           holdLastTickMs = now;
+          plankBreakFrames = 0;
+
+          $("hud-lock").className = "lock-pill lock-ok";
+          $("hud-lock").textContent = "holding plank";
 
           // Track by wireframe color
           if (plankTheme.r === 16) {
@@ -2113,24 +2117,9 @@ function loop() {
             $("cue").hidden = false;
           }
 
-          // Accumulate criteria stats
-          if (posture.details?.alignment === "good") plankPostureStats.alignment.goodMs += dt;
-          else if (posture.details?.alignment === "warn") plankPostureStats.alignment.warnMs += dt;
-          else plankPostureStats.alignment.badMs += dt;
-
-          if (posture.details?.knees === "good") plankPostureStats.knees.goodMs += dt;
-          else plankPostureStats.knees.badMs += dt;
-
-          if (posture.details?.elbows === "good") plankPostureStats.elbows.goodMs += dt;
-          else if (posture.details?.elbows === "warn") plankPostureStats.elbows.warnMs += dt;
-          else plankPostureStats.elbows.badMs += dt;
-
           // Formatted timer vs target
-          if (plankTargetSeconds > 0) {
-            $("rep-count").textContent = `${formatHoldTime(holdElapsedMs)} / ${formatHoldTime(plankTargetSeconds * 1000)}`;
-          } else {
-            $("rep-count").textContent = formatHoldTime(holdElapsedMs);
-          }
+          $("rep-count").textContent = formatHoldTime(holdElapsedMs);
+          $("rep-unit").textContent = `/ ${formatHoldTime(plankTargetSeconds * 1000)}`;
 
           // Target reached
           if (plankTargetSeconds > 0 && holdElapsedMs >= plankTargetSeconds * 1000) {
@@ -2211,7 +2200,8 @@ function loop() {
       if (exercise === "plank") {
         if (sessionPhase === "active" && plankHoldActive) {
           plankBreakFrames++;
-          const dt = Math.min(now - (holdLastTickMs || now), 200);
+          if (holdLastTickMs == null) holdLastTickMs = now;
+          const dt = Math.max(0, Math.min(now - holdLastTickMs, 200));
           holdElapsedMs += dt;
           holdBadMs += dt;
           holdLastTickMs = now;
@@ -2221,9 +2211,9 @@ function loop() {
           $("phase").className = "rep-phase bad";
           $("cue").textContent = "Step back into view";
           $("cue").hidden = false;
-          if (plankTargetSeconds > 0) {
-            $("rep-count").textContent = `${formatHoldTime(holdElapsedMs)} / ${formatHoldTime(plankTargetSeconds * 1000)}`;
-          }
+          $("rep-count").textContent = formatHoldTime(holdElapsedMs);
+          $("rep-unit").textContent = `/ ${formatHoldTime(plankTargetSeconds * 1000)}`;
+
           if (plankTargetSeconds > 0 && holdElapsedMs >= plankTargetSeconds * 1000) {
             playFinishSound();
             stopSet();
@@ -2669,8 +2659,8 @@ async function startSet(ex, targetSeconds = null) {
     $("hud-exercise").textContent = displayName;
 
     const repUnitEl = $("rep-unit");
-    if (repUnitEl) repUnitEl.textContent = isHoldExercise ? `TARGET ${plankTargetSeconds}s` : "REPS";
-    $("rep-count").textContent = isHoldExercise ? `00:00 / ${formatHoldTime(plankTargetSeconds * 1000)}` : "0";
+    if (repUnitEl) repUnitEl.textContent = isHoldExercise ? `/ ${formatHoldTime(plankTargetSeconds * 1000)}` : "REPS";
+    $("rep-count").textContent = isHoldExercise ? "0s" : "0";
     $("phase").textContent = isHoldExercise ? "GET READY" : "—";
     $("phase").className = "rep-phase";
     $("hud-lock").className = "lock-pill lock-unknown";
@@ -2797,20 +2787,26 @@ function backToPicker() {
 // summary from the accumulated reps[] or hold time
 function renderSummary(r) {
   if (isHoldExercise) {
+    const targetSecs = Math.max(5, plankTargetSeconds || 30);
+    const totalHoldSecs = Math.max(0, Math.round(holdElapsedMs / 1000));
+    
     $("sum-reps").textContent = formatHoldTime(holdElapsedMs);
     const sumLabel = $("sum-label");
-    const targetSecs = plankTargetSeconds || 30;
     if (sumLabel) sumLabel.textContent = `total hold time (target ${targetSecs}s)`;
 
-    const totalHoldSecs = Math.round(holdElapsedMs / 1000);
-    const totalTrackedMs = (holdGoodMs + holdWarnMs + holdBadMs) || holdElapsedMs || 1;
-    const goodSecs = (holdGoodMs / 1000).toFixed(1);
-    const warnSecs = (holdWarnMs / 1000).toFixed(1);
-    const badSecs = (holdBadMs / 1000).toFixed(1);
+    const safeGoodMs = Math.max(0, holdGoodMs);
+    const safeWarnMs = Math.max(0, holdWarnMs);
+    const safeBadMs = Math.max(0, holdBadMs);
+    const totalTrackedMs = (safeGoodMs + safeWarnMs + safeBadMs) || Math.max(1, holdElapsedMs);
 
-    const goodPct = Math.round((holdGoodMs / totalTrackedMs) * 100);
-    const warnPct = Math.round((holdWarnMs / totalTrackedMs) * 100);
+    const goodSecs = (safeGoodMs / 1000).toFixed(1);
+    const warnSecs = (safeWarnMs / 1000).toFixed(1);
+    const badSecs = (safeBadMs / 1000).toFixed(1);
+
+    const goodPct = Math.min(100, Math.max(0, Math.round((safeGoodMs / totalTrackedMs) * 100)));
+    const warnPct = Math.min(100 - goodPct, Math.max(0, Math.round((safeWarnMs / totalTrackedMs) * 100)));
     const badPct = Math.max(0, 100 - goodPct - warnPct);
+    const holdPctOfTarget = Math.min(100, Math.max(0, Math.round((totalHoldSecs / targetSecs) * 100)));
 
     $("sum-clean").textContent = totalHoldSecs >= 3
       ? (goodPct >= 75 ? "Strong hold! Excellent alignment." : (goodPct >= 45 ? "Good effort — minor posture adjustments needed." : "Form broke down — review the posture report below."))
@@ -2819,17 +2815,6 @@ function renderSummary(r) {
     const breakdownEl = $("sum-hold-breakdown");
     if (breakdownEl) {
       breakdownEl.hidden = false;
-
-      // Calculate criteria percentages
-      const alignTotal = (plankPostureStats.alignment.goodMs + plankPostureStats.alignment.warnMs + plankPostureStats.alignment.badMs) || 1;
-      const alignPct = Math.round((plankPostureStats.alignment.goodMs / alignTotal) * 100);
-
-      const kneesTotal = (plankPostureStats.knees.goodMs + plankPostureStats.knees.badMs) || 1;
-      const kneesPct = Math.round((plankPostureStats.knees.goodMs / kneesTotal) * 100);
-
-      const elbowsTotal = (plankPostureStats.elbows.goodMs + plankPostureStats.elbows.warnMs + plankPostureStats.elbows.badMs) || 1;
-      const elbowsPct = Math.round((plankPostureStats.elbows.goodMs / elbowsTotal) * 100);
-
       const scoreCircleClass = goodPct >= 75 ? "good" : (goodPct >= 45 ? "warn" : "bad");
 
       breakdownEl.innerHTML = `
@@ -2845,7 +2830,7 @@ function renderSummary(r) {
             </div>
             <div class="posture-target-row">
               <span class="posture-meta-lbl">Hold Completed</span>
-              <span class="posture-meta-val">${totalHoldSecs}s (${Math.min(100, Math.round((totalHoldSecs / targetSecs) * 100))}%)</span>
+              <span class="posture-meta-val">${totalHoldSecs}s (${holdPctOfTarget}%)</span>
             </div>
           </div>
         </div>
@@ -2868,30 +2853,6 @@ function renderSummary(r) {
           <div class="hold-metric-row">
             <span class="hold-tag"><span class="hold-dot bad"></span> Completely Wrong (Red)</span>
             <span class="hold-val">${badSecs}s (${badPct}%)</span>
-          </div>
-        </div>
-
-        <div class="posture-criteria-grid">
-          <div class="posture-criteria-item">
-            <div class="criteria-top">
-              <span class="criteria-name">Spine Line</span>
-              <span class="criteria-badge ${alignPct >= 70 ? 'good' : 'warn'}">${alignPct}%</span>
-            </div>
-            <span class="criteria-desc">${alignPct >= 70 ? 'Aligned' : 'Sag/Pike'}</span>
-          </div>
-          <div class="posture-criteria-item">
-            <div class="criteria-top">
-              <span class="criteria-name">Knees Up</span>
-              <span class="criteria-badge ${kneesPct >= 80 ? 'good' : 'bad'}">${kneesPct}%</span>
-            </div>
-            <span class="criteria-desc">${kneesPct >= 80 ? 'Off Floor' : 'Dropped'}</span>
-          </div>
-          <div class="posture-criteria-item">
-            <div class="criteria-top">
-              <span class="criteria-name">90° Arms</span>
-              <span class="criteria-badge ${elbowsPct >= 70 ? 'good' : 'warn'}">${elbowsPct}%</span>
-            </div>
-            <span class="criteria-desc">${elbowsPct >= 70 ? 'Optimal' : 'Adjust'}</span>
           </div>
         </div>
       `;
