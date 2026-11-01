@@ -800,4 +800,82 @@ test("Plank: 90° forearms with hips on floor and knees straight returns state: 
   assert.equal(res.state, "broken", "Hips resting on floor must be broken, not sag");
 });
 
+test("Plank: elbows at 90° with shoulder-back aligned and knees elevated returns good (green)", () => {
+  const app = loadAppSandbox();
+  const lm = createBaseLandmarks();
+
+  // Shoulder (0.25, 0.55), Elbow (0.25, 0.70), Wrist (0.40, 0.70) => exactly 90° angle
+  lm[11] = { x: 0.25, y: 0.55, z: 0, visibility: 0.95 };
+  lm[13] = { x: 0.25, y: 0.70, z: 0, visibility: 0.95 };
+  lm[15] = { x: 0.40, y: 0.70, z: 0, visibility: 0.95 };
+  // Straight spine and knees elevated
+  lm[23] = { x: 0.50, y: 0.57, z: 0, visibility: 0.95 };
+  lm[25] = { x: 0.65, y: 0.58, z: 0, visibility: 0.95 };
+  lm[27] = { x: 0.80, y: 0.60, z: 0, visibility: 0.95 };
+
+  const res = app.evaluatePlankPosture(lm);
+  assert.equal(res.state, "good");
+  assert.equal(res.details.color, "green");
+  assert.equal(res.details.alignment, "good");
+  assert.equal(res.details.knees, "good");
+  assert.equal(res.details.elbows, "good");
+});
+
+test("Plank: elbows at 75° or 105° (room for error around 90°) still passes as good (green)", () => {
+  const app = loadAppSandbox();
+  const lm = createBaseLandmarks();
+
+  // Forearm angled ~75°
+  lm[11] = { x: 0.25, y: 0.55, z: 0, visibility: 0.95 };
+  lm[13] = { x: 0.25, y: 0.70, z: 0, visibility: 0.95 };
+  lm[15] = { x: 0.36, y: 0.66, z: 0, visibility: 0.95 };
+  lm[23] = { x: 0.50, y: 0.57, z: 0, visibility: 0.95 };
+  lm[25] = { x: 0.65, y: 0.58, z: 0, visibility: 0.95 };
+  lm[27] = { x: 0.80, y: 0.60, z: 0, visibility: 0.95 };
+
+  const res = app.evaluatePlankPosture(lm);
+  assert.equal(res.state, "good");
+  assert.equal(res.details.color, "green");
+  assert.equal(res.details.elbows, "good");
+});
+
+test("Plank: elbows mildly off 90° (e.g. 60° or 118°) triggers yellow warning (some error)", () => {
+  const app = loadAppSandbox();
+  const lm = createBaseLandmarks();
+
+  // Forearm angled ~60°
+  lm[11] = { x: 0.25, y: 0.55, z: 0, visibility: 0.95 };
+  lm[13] = { x: 0.25, y: 0.70, z: 0, visibility: 0.95 };
+  lm[15] = { x: 0.38, y: 0.625, z: 0, visibility: 0.95 };
+  lm[23] = { x: 0.50, y: 0.57, z: 0, visibility: 0.95 };
+  lm[25] = { x: 0.65, y: 0.58, z: 0, visibility: 0.95 };
+  lm[27] = { x: 0.80, y: 0.60, z: 0, visibility: 0.95 };
+
+  const res = app.evaluatePlankPosture(lm);
+  assert.equal(res.state, "warn");
+  assert.equal(res.details.color, "yellow");
+  assert.equal(res.details.elbows, "warn");
+  assert.match(res.cue, /90°/);
+});
+
+test("Plank: straight arms (>128°) in pushup stance triggers red / broken state", () => {
+  const app = loadAppSandbox();
+  const lm = createBaseLandmarks();
+
+  // Extended arm (~160°)
+  lm[11] = { x: 0.25, y: 0.45, z: 0, visibility: 0.95 };
+  lm[13] = { x: 0.25, y: 0.58, z: 0, visibility: 0.95 };
+  lm[15] = { x: 0.25, y: 0.70, z: 0, visibility: 0.95 };
+  lm[23] = { x: 0.50, y: 0.52, z: 0, visibility: 0.95 };
+  lm[25] = { x: 0.65, y: 0.56, z: 0, visibility: 0.95 };
+  lm[27] = { x: 0.80, y: 0.60, z: 0, visibility: 0.95 };
+
+  const res = app.evaluatePlankPosture(lm);
+  assert.equal(res.state, "broken");
+  assert.equal(res.details.color, "red");
+  assert.equal(res.details.elbows, "bad");
+  assert.match(res.cue, /forearms/i);
+});
+
+
 

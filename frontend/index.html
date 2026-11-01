@@ -276,6 +276,51 @@
           <svg class="chevron-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"></polyline></svg>
         </button>
       </div>
+
+      <!-- Plank Target Time Modal -->
+      <div id="plank-timer-modal" class="state-overlay" hidden>
+        <div class="state-card plank-setup-card">
+          <button id="plank-modal-close" class="ghost-btn state-dismiss" aria-label="Close">&times;</button>
+          <div class="plank-modal-header">
+            <div class="plank-modal-icon">
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="12" cy="12" r="10"></circle>
+                <polyline points="12 6 12 12 16 14"></polyline>
+              </svg>
+            </div>
+            <div>
+              <h3 class="state-title" style="margin:0; text-align:left;">Target Plank Time</h3>
+              <p class="state-msg" style="margin:2px 0 0; text-align:left; font-size:12px;">5s countdown gives you time to get in position</p>
+            </div>
+          </div>
+
+          <div class="plank-target-stepper">
+            <button id="plank-time-minus" class="plank-stepper-btn" type="button" aria-label="Decrease time">-5s</button>
+            <div class="plank-time-display">
+              <span id="plank-target-val" class="plank-target-val">30</span>
+              <span class="plank-target-unit">sec</span>
+            </div>
+            <button id="plank-time-plus" class="plank-stepper-btn" type="button" aria-label="Increase time">+5s</button>
+          </div>
+
+          <div class="plank-preset-chips" id="plank-preset-chips">
+            <button class="plank-chip" type="button" data-time="15">15s</button>
+            <button class="plank-chip active" type="button" data-time="30">30s</button>
+            <button class="plank-chip" type="button" data-time="45">45s</button>
+            <button class="plank-chip" type="button" data-time="60">60s</button>
+            <button class="plank-chip" type="button" data-time="90">90s</button>
+            <button class="plank-chip" type="button" data-time="120">2m</button>
+          </div>
+
+          <div class="plank-guide-notes">
+            <div class="plank-note-item"><span class="plank-dot good"></span> <strong>Green:</strong> Correct (Aligned, 90° elbows, knees up)</div>
+            <div class="plank-note-item"><span class="plank-dot warn"></span> <strong>Yellow:</strong> Minor error (Slight hip sag/pike or arm drift)</div>
+            <div class="plank-note-item"><span class="plank-dot bad"></span> <strong>Red:</strong> Form broken or knees on floor</div>
+          </div>
+
+          <button id="btn-start-plank" class="onb-cta" type="button" style="width:100%;">Start Workout (5s Countdown)</button>
+        </div>
+      </div>
     </div>
 
     <!-- Bottom Navigation Bar -->

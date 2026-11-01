@@ -79,12 +79,19 @@ let holdStartTime = null;
 let holdElapsedMs = 0;
 let holdGoodMs = 0;
 let holdWarnMs = 0;
+let holdBadMs = 0;
 let holdLastTickMs = null;
 let plankHoldActive = false;
 let plankBreakFrames = 0;
 let plankDominantFaults = {};
 let plankBaselineHipY = null;
 let plankWasFormBroken = false;
+let plankTargetSeconds = 30;
+let plankPostureStats = {
+  alignment: { goodMs: 0, warnMs: 0, badMs: 0 },
+  knees: { goodMs: 0, badMs: 0 },
+  elbows: { goodMs: 0, warnMs: 0, badMs: 0 },
+};
 
 // Bicep Curl on-device tracking state (supports front & side view rep counting)
 let bicepCurlReps = 0;
@@ -1207,7 +1214,7 @@ function formatHoldTime(ms) {
 // Analyzes vector alignment between Shoulder, Hip, Knee, and Ankle.
 // Detects pushups vs forearm plank, exhaustion/lying flat, bent knees, and fixed hip height.
 function evaluatePlankPosture(lm, baselineHipY = null) {
-  if (!lm || lm.length < 33) return { state: "broken", angle: 0, cue: "Can't see body" };
+  if (!lm || lm.length < 33) return { state: "broken", angle: 0, cue: "Can't see body", details: { alignment: "bad", knees: "bad", elbows: "bad", color: "red" } };
 
   const ls = lm[11], rs = lm[12]; // shoulders
   const le = lm[13], re = lm[14]; // elbows
@@ -1228,17 +1235,17 @@ function evaluatePlankPosture(lm, baselineHipY = null) {
   const a = leftVis >= rightVis ? la : ra;
 
   const minVis = Math.min(s?.visibility ?? 0, h?.visibility ?? 0, a?.visibility ?? 0);
-  if (minVis < 0.35) {
-    return { state: "broken", angle: 0, cue: "Step back into view" };
+  if (minVis < 0.25) {
+    return { state: "broken", angle: 0, cue: "Step back into view", details: { alignment: "bad", knees: "bad", elbows: "bad", color: "red" } };
   }
 
   // 1. Orientation check: body must be roughly horizontal
   const dx = Math.abs(s.x - a.x);
   const dy = Math.abs(s.y - a.y);
-  const isHorizontal = dx > dy * 0.55 && dx >= 0.12;
+  const isHorizontal = dx > dy * 0.45 && dx >= 0.10;
 
   if (!isHorizontal) {
-    return { state: "broken", angle: 0, cue: "Get down into plank posture" };
+    return { state: "broken", angle: 0, cue: "Get down into plank posture", details: { alignment: "bad", knees: "bad", elbows: "bad", color: "red" } };
   }
 
   const bodyLen = Math.hypot(s.x - a.x, s.y - a.y) || 0.5;
@@ -1271,37 +1278,62 @@ function evaluatePlankPosture(lm, baselineHipY = null) {
     )
   );
   if (isChestFlatOnFloor) {
-    return { state: "broken", angle: 180, cue: "Resting on floor — press up into plank" };
+    return {
+      state: "broken",
+      angle: 180,
+      cue: "Resting on floor — press up into plank",
+      faultKey: "resting_on_floor",
+      details: { alignment: "bad", knees: "bad", elbows: "bad", color: "red" }
+    };
   }
 
-  // 3. Reject Pushups & Straight-arm High Planks:
-  // In a valid forearm plank:
-  // - The arm angle (shoulder -> elbow -> wrist) must be near 90° (constant angle: 65° to 118°).
-  // - The elbow (e) and wrist (w) must rest at approximately ground level.
-  // In a pushup: arms are extended (angle 150°-180°), or elbows are elevated high above wrists.
+  // 3. Elbows at 90 degree angle check (allow room for some error):
+  // - Green: 68° to 112° (centered around 90°)
+  // - Yellow: 52° to 68° or 112° to 128°
+  // - Red: > 128° (pushup / straight-arm stance on hands) or < 50° (collapsed)
+  let elbowState = "good";
+  let armAngle = 90;
   const armVis = Math.min(s.visibility ?? 0, e.visibility ?? 0, w.visibility ?? 0);
   if (armVis >= 0.35) {
-    const armAngle = calcAngleDeg(s, e, w);
-    const isPushupArm = armAngle > 120.0 || (e.y < w.y - 0.08 * bodyLen);
+    armAngle = calcAngleDeg(s, e, w);
+    const isPushupArm = armAngle > 125.0 || (e.y < w.y - 0.08 * bodyLen);
     if (isPushupArm) {
       return {
         state: "broken",
         angle: calcAngleDeg(s, h, a),
+        armAngle,
         cue: "Rest on forearms — bend elbows near 90°",
+        faultKey: "pushup_arms",
+        details: { alignment: "warn", knees: "good", elbows: "bad", color: "red" }
       };
+    }
+    if (armAngle < 50.0) {
+      return {
+        state: "broken",
+        angle: calcAngleDeg(s, h, a),
+        armAngle,
+        cue: "Elbows collapsed — bend elbows near 90°",
+        faultKey: "collapsed_elbows",
+        details: { alignment: "good", knees: "good", elbows: "bad", color: "red" }
+      };
+    } else if ((armAngle >= 50.0 && armAngle < 68.0) || (armAngle > 112.0 && armAngle <= 125.0)) {
+      elbowState = "warn";
+    } else {
+      elbowState = "good";
     }
   }
 
-  // 4. Fixed Hip Height & Threshold of Hip Movement:
-  // Hips should stay at a fixed height from the ground.
-  // Once a baseline is established, vertical hip drift beyond threshold (> 0.10 * bodyLen) stops timer as broken.
+  // 4. Fixed Hip Height (for baseline test check if baselineHipY is provided):
   if (baselineHipY != null) {
     const hipDrift = Math.abs(h.y - baselineHipY);
     if (hipDrift > 0.10 * bodyLen) {
       return {
         state: "broken",
         angle: calcAngleDeg(s, h, a),
+        armAngle,
         cue: h.y > baselineHipY ? "Hips dropped below baseline — hold steady" : "Hips raised above baseline — hold steady",
+        faultKey: "hip_drift",
+        details: { alignment: "bad", knees: "good", elbows: elbowState, color: "red" }
       };
     }
   }
@@ -1314,18 +1346,33 @@ function evaluatePlankPosture(lm, baselineHipY = null) {
 
   // 5. Severe hip deviation: hips sagging down near floor or piking high in inverted-V
   if (diffY > 0.055 || (angle < 145.0 && diffY > 0)) {
-    return { state: "broken", angle, cue: "Hips sagging too low — straighten body" };
+    return {
+      state: "broken",
+      angle,
+      armAngle,
+      cue: "Hips sagging too low — straighten body",
+      faultKey: "severe_sag",
+      details: { alignment: "bad", knees: "good", elbows: elbowState, color: "red" }
+    };
   }
 
   if (diffY < -0.065 || (angle < 145.0 && diffY < 0)) {
-    return { state: "broken", angle, cue: "Hips piked too high — lower to straight line" };
+    return {
+      state: "broken",
+      angle,
+      armAngle,
+      cue: "Hips piked too high — lower to straight line",
+      faultKey: "severe_pike",
+      details: { alignment: "bad", knees: "good", elbows: elbowState, color: "red" }
+    };
   }
 
   // 6. Knees on floor check:
-  // Enforce straight leg alignment: calcAngleDeg(hip, knee, ankle) >= 155°
-  // AND ensure knees are not resting on the floor
+  // Knees must be off the ground!
+  let kneeState = "good";
+  let kneeAngle = 180;
   if (kneeVis >= 0.30) {
-    const kneeAngle = calcAngleDeg(h, k, a);
+    kneeAngle = calcAngleDeg(h, k, a);
     const tk = (k.x - h.x) / (a.x - h.x || 0.0001);
     const expectedKneeY = h.y + tk * (a.y - h.y);
     const kneeSag = k.y - expectedKneeY;
@@ -1335,7 +1382,11 @@ function evaluatePlankPosture(lm, baselineHipY = null) {
       return {
         state: "broken",
         angle,
+        armAngle,
+        kneeAngle,
         cue: "Knees on floor — lift knees to full plank",
+        faultKey: "knees_on_floor",
+        details: { alignment: "warn", knees: "bad", elbows: elbowState, color: "red" }
       };
     }
   }
@@ -1346,30 +1397,65 @@ function evaluatePlankPosture(lm, baselineHipY = null) {
     return {
       state: "broken",
       angle,
+      armAngle,
       cue: "Hips on floor — lift body into plank",
+      faultKey: "hips_on_floor",
+      details: { alignment: "bad", knees: kneeState, elbows: elbowState, color: "red" }
     };
   }
 
-  // 8. Perfect posture (Green)
-  if (angle >= 155.0 && angle <= 180.0 && Math.abs(diffY) <= 0.038 && hipClearance > 0.030 * bodyLen) {
-    return { state: "good", angle, cue: "Great line — hold steady!" };
+  // 8. Determine Shoulder & Back Alignment state (allowing room for error):
+  let alignmentState = "good";
+  if (diffY > 0.035 || (angle < 155.0 && diffY > 0)) {
+    alignmentState = "sag";
+  } else if (diffY < -0.035 || (angle < 155.0 && diffY < 0)) {
+    alignmentState = "pike";
   }
 
-  // 9. Mild hip sag (Yellow / Warn) — ONLY while body remains safely suspended above floor
-  if ((diffY > 0.035 || (angle < 155.0 && diffY > 0)) && hipClearance > 0.030 * bodyLen) {
-    return { state: "sag", angle, cue: "Raise your hips to align with core" };
+  // 9. Mild hip sag (Yellow / Warn)
+  if (alignmentState === "sag") {
+    return {
+      state: "sag",
+      angle,
+      armAngle,
+      cue: "Raise your hips to align with core",
+      faultKey: "sag",
+      details: { alignment: "warn", knees: "good", elbows: elbowState, color: "yellow" }
+    };
   }
 
   // 10. Mild hip pike (Yellow / Warn)
-  if (diffY < -0.035 || (angle < 155.0 && diffY < 0)) {
-    return { state: "pike", angle, cue: "Lower your hips to a straight line" };
+  if (alignmentState === "pike") {
+    return {
+      state: "pike",
+      angle,
+      armAngle,
+      cue: "Lower your hips to a straight line",
+      faultKey: "pike",
+      details: { alignment: "warn", knees: "good", elbows: elbowState, color: "yellow" }
+    };
   }
 
-  if (angle >= 145.0 && Math.abs(diffY) <= 0.045 && hipClearance > 0.030 * bodyLen) {
-    return { state: "good", angle, cue: "Good posture — keep holding" };
+  // 11. Elbow warning (Yellow / Warn)
+  if (elbowState === "warn") {
+    return {
+      state: "warn",
+      angle,
+      armAngle,
+      cue: "Keep elbows near 90° angle",
+      faultKey: "elbow_angle",
+      details: { alignment: "good", knees: "good", elbows: "warn", color: "yellow" }
+    };
   }
 
-  return { state: "broken", angle, cue: "Plank posture broken" };
+  // 12. Correct posture (Green)
+  return {
+    state: "good",
+    angle,
+    armAngle,
+    cue: "Great line — hold steady!",
+    details: { alignment: "good", knees: "good", elbows: "good", color: "green" }
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -1855,21 +1941,21 @@ function hideGuidePill() {
   if (el) el.hidden = true;
 }
 
-function startCountdown() {
+function startCountdown(seconds = 3, message = "Get Ready") {
   if (sessionPhase === "countdown" || sessionPhase === "active") return;
   sessionPhase = "countdown";
-  countdownVal = 3;
+  countdownVal = seconds;
 
   const countdownEl = $("hud-countdown");
   const numEl = $("countdown-num");
   const msgEl = $("countdown-msg");
 
-  showGuidePill("In position — hold still...", true, "");
+  showGuidePill(exercise === "plank" ? "Get into plank posture on floor..." : "In position — hold still...", true, "");
 
   countdownEl.hidden = false;
-  numEl.textContent = "3";
+  numEl.textContent = String(seconds);
   numEl.style.color = "#ffffff";
-  msgEl.textContent = "Get Ready";
+  msgEl.textContent = message;
   numEl.style.animation = "none";
   numEl.offsetHeight; // trigger reflow
   numEl.style.animation = "popIn 0.35s cubic-bezier(0.175, 0.885, 0.32, 1.275)";
@@ -1891,7 +1977,7 @@ function startCountdown() {
       numEl.style.animation = "none";
       numEl.offsetHeight;
       numEl.style.animation = "popIn 0.35s cubic-bezier(0.175, 0.885, 0.32, 1.275)";
-      msgEl.textContent = "Start " + (exercise || "exercise");
+      msgEl.textContent = "Start " + (exercise === "plank" ? "Plank Hold" : (exercise || "exercise"));
       playBeep(880, 0.25);
     } else {
       clearInterval(countdownTimer);
@@ -1928,6 +2014,30 @@ function beginActiveWorkout() {
     forceRollAt: CFG.SESSION_FORCE_ROLL_AT,
   });
 
+  if (exercise === "plank") {
+    plankHoldActive = true;
+    holdStartTime = Date.now();
+    holdLastTickMs = Date.now();
+    holdElapsedMs = 0;
+    holdGoodMs = 0;
+    holdWarnMs = 0;
+    holdBadMs = 0;
+    plankDominantFaults = {};
+    plankPostureStats = {
+      alignment: { goodMs: 0, warnMs: 0, badMs: 0 },
+      knees: { goodMs: 0, badMs: 0 },
+      elbows: { goodMs: 0, warnMs: 0, badMs: 0 },
+    };
+    $("rep-count").textContent = `00:00 / ${formatHoldTime(plankTargetSeconds * 1000)}`;
+    $("rep-unit").textContent = `TARGET ${plankTargetSeconds}s`;
+    $("phase").textContent = "TRACKING POSTURE";
+    $("phase").className = "rep-phase";
+    $("hud-lock").className = "lock-pill lock-ok";
+    $("hud-lock").textContent = "holding plank";
+    playBeep(880, 0.2);
+    return;
+  }
+
   $("rep-count").textContent = "0";
   $("phase").textContent = "—";
   $("hud-lock").className = "lock-pill lock-ok";
@@ -1958,87 +2068,75 @@ function loop() {
         // ==========================================
         // ---- PLANK (HOLD) ENGINE ----
         // ==========================================
-        const posture = evaluatePlankPosture(lmToUse, plankHoldActive ? plankBaselineHipY : null);
-        const isDecentForm = posture.state === "good" || posture.state === "sag" || posture.state === "pike";
+        const posture = evaluatePlankPosture(lmToUse);
 
         // Dynamic theme for plank wireframe:
-        // Green (good) / Yellow (sag or pike) / Red (broken)
+        // Green (correct) / Yellow (some error/adjusted) / Red (completely wrong)
         let plankTheme = { r: 16, g: 185, b: 129 }; // Green
-        if (posture.state === "sag" || posture.state === "pike") {
+        if (posture.details?.color === "yellow" || posture.state === "sag" || posture.state === "pike" || posture.state === "warn") {
           plankTheme = { r: 250, g: 204, b: 21 }; // Yellow
-        } else if (posture.state === "broken") {
+        } else if (posture.details?.color === "red" || posture.state === "broken") {
           plankTheme = { r: 239, g: 68, b: 68 }; // Red
         }
 
         drawSkeleton(lmToUse, plankTheme);
 
-        if (!plankHoldActive) {
-          // Automatic Start: starts automatically when user assumes a valid, suspended plank position
-          if (posture.state === "good") {
-            steadyFrameCount++;
-            showGuidePill("Hold steady — starting hold!", true, "✓");
-            if (steadyFrameCount >= 8) {
-              plankHoldActive = true;
-              holdStartTime = now;
-              holdLastTickMs = now;
-              // Record baseline hip height from clean good posture
-              const activeSideHip = (lmToUse[23]?.visibility ?? 0) >= (lmToUse[24]?.visibility ?? 0) ? lmToUse[23] : lmToUse[24];
-              plankBaselineHipY = activeSideHip ? activeSideHip.y : null;
-              plankWasFormBroken = false;
-              playBeep(880, 0.2); // Start chime
-              hideGuidePill();
-              $("hud-lock").className = "lock-pill lock-ok";
-              $("hud-lock").textContent = "holding plank";
-            }
-          } else {
-            steadyFrameCount = 0;
-            const startCue = (posture.state === "sag" || posture.state === "pike")
-              ? posture.cue
-              : (posture.cue || "Get into straight plank posture");
-            showGuidePill(startCue, false);
-            $("hud-lock").className = "lock-pill lock-unknown";
-            $("hud-lock").textContent = "get ready";
-          }
-        } else {
-          // Active hold in progress
-          if (isDecentForm) {
-            plankWasFormBroken = false;
-            const dt = now - (holdLastTickMs || now);
-            holdElapsedMs += dt;
-            if (posture.state === "good") {
-              holdGoodMs += dt;
-              $("phase").textContent = "PERFECT FORM";
-              $("phase").className = "rep-phase good";
-              $("cue").hidden = true;
-            } else {
-              holdWarnMs += dt;
-              plankDominantFaults[posture.state] = (plankDominantFaults[posture.state] || 0) + dt;
-              $("phase").textContent = posture.state === "sag" ? "HIP SAG" : "HIP PIKE";
-              $("phase").className = "rep-phase warn";
-              $("cue").textContent = posture.cue;
-              $("cue").hidden = false;
-            }
-            holdLastTickMs = now;
-            $("rep-count").textContent = formatHoldTime(holdElapsedMs);
-            plankBreakFrames = 0;
-          } else {
-            // Posture broken (collapsed, pushup, hips moved, knees on floor, or stood up)
-            if (!plankWasFormBroken) {
-              plankWasFormBroken = true;
-              playErrorTone(); // immediate audio alert that form broke and timer paused
-            }
-            plankBreakFrames++;
-            $("phase").textContent = "FORM BROKEN";
-            $("phase").className = "rep-phase bad";
-            $("cue").textContent = posture.cue || "Posture broken — hold straight line";
-            $("cue").hidden = false;
-            holdLastTickMs = now;
+        if (sessionPhase === "active" && plankHoldActive) {
+          const dt = Math.min(now - (holdLastTickMs || now), 200);
+          holdElapsedMs += dt;
+          holdLastTickMs = now;
 
-            // Automatic Stop on exhaustion (>1.2s break)
-            if (plankBreakFrames > 35) {
-              stopSet();
-              return;
-            }
+          // Track by wireframe color
+          if (plankTheme.r === 16) {
+            // Green: Correct posture
+            holdGoodMs += dt;
+            $("phase").textContent = "CORRECT POSTURE";
+            $("phase").className = "rep-phase good";
+            $("cue").hidden = true;
+          } else if (plankTheme.r === 250) {
+            // Yellow: Some error / adjusted
+            holdWarnMs += dt;
+            const fault = posture.faultKey || posture.state || "adjusted";
+            plankDominantFaults[fault] = (plankDominantFaults[fault] || 0) + dt;
+            $("phase").textContent = posture.state === "sag" ? "HIP SAG" : (posture.state === "pike" ? "HIP PIKE" : "ADJUST FORM");
+            $("phase").className = "rep-phase warn";
+            $("cue").textContent = posture.cue || "Minor adjustment needed";
+            $("cue").hidden = false;
+          } else {
+            // Red: Completely wrong
+            holdBadMs += dt;
+            const fault = posture.faultKey || "broken";
+            plankDominantFaults[fault] = (plankDominantFaults[fault] || 0) + dt;
+            $("phase").textContent = "INCORRECT POSTURE";
+            $("phase").className = "rep-phase bad";
+            $("cue").textContent = posture.cue || "Incorrect posture — align body";
+            $("cue").hidden = false;
+          }
+
+          // Accumulate criteria stats
+          if (posture.details?.alignment === "good") plankPostureStats.alignment.goodMs += dt;
+          else if (posture.details?.alignment === "warn") plankPostureStats.alignment.warnMs += dt;
+          else plankPostureStats.alignment.badMs += dt;
+
+          if (posture.details?.knees === "good") plankPostureStats.knees.goodMs += dt;
+          else plankPostureStats.knees.badMs += dt;
+
+          if (posture.details?.elbows === "good") plankPostureStats.elbows.goodMs += dt;
+          else if (posture.details?.elbows === "warn") plankPostureStats.elbows.warnMs += dt;
+          else plankPostureStats.elbows.badMs += dt;
+
+          // Formatted timer vs target
+          if (plankTargetSeconds > 0) {
+            $("rep-count").textContent = `${formatHoldTime(holdElapsedMs)} / ${formatHoldTime(plankTargetSeconds * 1000)}`;
+          } else {
+            $("rep-count").textContent = formatHoldTime(holdElapsedMs);
+          }
+
+          // Target reached
+          if (plankTargetSeconds > 0 && holdElapsedMs >= plankTargetSeconds * 1000) {
+            playFinishSound();
+            stopSet();
+            return;
           }
         }
       } else {
@@ -2111,16 +2209,30 @@ function loop() {
       octx.clearRect(0, 0, overlay.width, overlay.height);
 
       if (exercise === "plank") {
-        if (plankHoldActive) {
+        if (sessionPhase === "active" && plankHoldActive) {
           plankBreakFrames++;
-          if (plankBreakFrames > 35) {
+          const dt = Math.min(now - (holdLastTickMs || now), 200);
+          holdElapsedMs += dt;
+          holdBadMs += dt;
+          holdLastTickMs = now;
+          $("hud-lock").className = "lock-pill lock-lost";
+          $("hud-lock").textContent = "can't see you";
+          $("phase").textContent = "INCORRECT POSTURE";
+          $("phase").className = "rep-phase bad";
+          $("cue").textContent = "Step back into view";
+          $("cue").hidden = false;
+          if (plankTargetSeconds > 0) {
+            $("rep-count").textContent = `${formatHoldTime(holdElapsedMs)} / ${formatHoldTime(plankTargetSeconds * 1000)}`;
+          }
+          if (plankTargetSeconds > 0 && holdElapsedMs >= plankTargetSeconds * 1000) {
+            playFinishSound();
             stopSet();
             return;
           }
-        } else {
-          showGuidePill("Place phone on floor, step back into plank", false);
-          $("hud-lock").className = "lock-pill lock-lost";
-          $("hud-lock").textContent = "can't see you";
+          if (plankBreakFrames > 300) {
+            stopSet();
+            return;
+          }
         }
       } else {
         if (sessionPhase === "positioning") {
@@ -2418,7 +2530,11 @@ function drawSkeleton(lm, theme = { r: 16, g: 185, b: 129 }) {
   const sVisMax = Math.max(lm[11].visibility ?? 0, lm[12].visibility ?? 0);
   const sVisMin = Math.min(lm[11].visibility ?? 0, lm[12].visibility ?? 0);
   const isSide = Math.abs(lm[11].x - lm[12].x) < 0.12;
-  if (isSide ? sVisMax < 0.40 : sVisMin < 0.35) return;
+  if (exercise === "plank") {
+    if (sVisMax < 0.25) return;
+  } else {
+    if (isSide ? sVisMax < 0.40 : sVisMin < 0.35) return;
+  }
 
   octx.lineCap = "round";
 
@@ -2468,9 +2584,12 @@ let isStartingSet = false;
 
 // ---------------------------------------------------------------------------
 // start / stop a set
-async function startSet(ex) {
+async function startSet(ex, targetSeconds = null) {
   if (isStartingSet) return;
   isStartingSet = true;
+  if (ex === "plank" && targetSeconds != null) {
+    plankTargetSeconds = targetSeconds;
+  }
 
   try {
     clearTimeout(streamIdleTimer);
@@ -2500,12 +2619,18 @@ async function startSet(ex) {
     holdElapsedMs = 0;
     holdGoodMs = 0;
     holdWarnMs = 0;
+    holdBadMs = 0;
     holdLastTickMs = null;
     plankHoldActive = false;
     plankBreakFrames = 0;
     plankDominantFaults = {};
     plankBaselineHipY = null;
     plankWasFormBroken = false;
+    plankPostureStats = {
+      alignment: { goodMs: 0, warnMs: 0, badMs: 0 },
+      knees: { goodMs: 0, badMs: 0 },
+      elbows: { goodMs: 0, warnMs: 0, badMs: 0 },
+    };
 
     bicepCurlReps = 0;
     bicepCurlArms = {
@@ -2544,18 +2669,18 @@ async function startSet(ex) {
     $("hud-exercise").textContent = displayName;
 
     const repUnitEl = $("rep-unit");
-    if (repUnitEl) repUnitEl.textContent = isHoldExercise ? "HOLD" : "REPS";
-    $("rep-count").textContent = isHoldExercise ? "0s" : "0";
+    if (repUnitEl) repUnitEl.textContent = isHoldExercise ? `TARGET ${plankTargetSeconds}s` : "REPS";
+    $("rep-count").textContent = isHoldExercise ? `00:00 / ${formatHoldTime(plankTargetSeconds * 1000)}` : "0";
     $("phase").textContent = isHoldExercise ? "GET READY" : "—";
     $("phase").className = "rep-phase";
     $("hud-lock").className = "lock-pill lock-unknown";
-    $("hud-lock").textContent = isHoldExercise ? "get ready" : "step back";
+    $("hud-lock").textContent = isHoldExercise ? "countdown" : "step back";
     $("cue").hidden = true;
     $("flags").innerHTML = "";
     show("live");
 
     let initialGuide = "Set phone down & step back";
-    if (ex === "plank") initialGuide = "Place phone on floor, step back into plank";
+    if (ex === "plank") initialGuide = "5-second countdown starting — get in position!";
     else if (ex === "bicep_curl") initialGuide = "Front or side view — keep elbows & fists in frame";
     showGuidePill(initialGuide, false);
 
@@ -2599,6 +2724,10 @@ async function startSet(ex) {
     requestAnimationFrame(loop);
     if (postTimer) clearInterval(postTimer);
     postTimer = setInterval(flush, CFG.POST_INTERVAL_MS);
+
+    if (ex === "plank") {
+      startCountdown(5, "Get into position");
+    }
   } catch (err) {
     if (err && (err.name === "NotAllowedError" || err.name === "SecurityError")) {
       showCameraBlockedState(ex);
@@ -2670,34 +2799,99 @@ function renderSummary(r) {
   if (isHoldExercise) {
     $("sum-reps").textContent = formatHoldTime(holdElapsedMs);
     const sumLabel = $("sum-label");
-    if (sumLabel) sumLabel.textContent = "total hold time";
+    const targetSecs = plankTargetSeconds || 30;
+    if (sumLabel) sumLabel.textContent = `total hold time (target ${targetSecs}s)`;
 
     const totalHoldSecs = Math.round(holdElapsedMs / 1000);
-    const goodSecs = Math.round(holdGoodMs / 1000);
-    const warnSecs = Math.max(0, totalHoldSecs - goodSecs);
-    const goodPct = totalHoldSecs > 0 ? Math.round((holdGoodMs / holdElapsedMs) * 100) : 0;
-    const warnPct = totalHoldSecs > 0 ? 100 - goodPct : 0;
+    const totalTrackedMs = (holdGoodMs + holdWarnMs + holdBadMs) || holdElapsedMs || 1;
+    const goodSecs = (holdGoodMs / 1000).toFixed(1);
+    const warnSecs = (holdWarnMs / 1000).toFixed(1);
+    const badSecs = (holdBadMs / 1000).toFixed(1);
+
+    const goodPct = Math.round((holdGoodMs / totalTrackedMs) * 100);
+    const warnPct = Math.round((holdWarnMs / totalTrackedMs) * 100);
+    const badPct = Math.max(0, 100 - goodPct - warnPct);
 
     $("sum-clean").textContent = totalHoldSecs >= 3
-      ? (goodPct >= 70 ? "Strong hold! Excellent alignment." : "Good effort — room to improve core alignment.")
+      ? (goodPct >= 75 ? "Strong hold! Excellent alignment." : (goodPct >= 45 ? "Good effort — minor posture adjustments needed." : "Form broke down — review the posture report below."))
       : "Hold was too short to score.";
 
     const breakdownEl = $("sum-hold-breakdown");
     if (breakdownEl) {
       breakdownEl.hidden = false;
+
+      // Calculate criteria percentages
+      const alignTotal = (plankPostureStats.alignment.goodMs + plankPostureStats.alignment.warnMs + plankPostureStats.alignment.badMs) || 1;
+      const alignPct = Math.round((plankPostureStats.alignment.goodMs / alignTotal) * 100);
+
+      const kneesTotal = (plankPostureStats.knees.goodMs + plankPostureStats.knees.badMs) || 1;
+      const kneesPct = Math.round((plankPostureStats.knees.goodMs / kneesTotal) * 100);
+
+      const elbowsTotal = (plankPostureStats.elbows.goodMs + plankPostureStats.elbows.warnMs + plankPostureStats.elbows.badMs) || 1;
+      const elbowsPct = Math.round((plankPostureStats.elbows.goodMs / elbowsTotal) * 100);
+
+      const scoreCircleClass = goodPct >= 75 ? "good" : (goodPct >= 45 ? "warn" : "bad");
+
       breakdownEl.innerHTML = `
-        <div class="hold-progress-bar">
-          <div class="hold-bar-good" style="width: ${goodPct}%"></div>
-          <div class="hold-bar-warn" style="width: ${warnPct}%"></div>
+        <div class="posture-report-header">
+          <div class="posture-score-circle ${scoreCircleClass}">
+            <span class="posture-score-num">${goodPct}%</span>
+            <span class="posture-score-sub">Correct</span>
+          </div>
+          <div class="posture-target-meta">
+            <div class="posture-target-row">
+              <span class="posture-meta-lbl">Target Time</span>
+              <span class="posture-meta-val">${targetSecs}s</span>
+            </div>
+            <div class="posture-target-row">
+              <span class="posture-meta-lbl">Hold Completed</span>
+              <span class="posture-meta-val">${totalHoldSecs}s (${Math.min(100, Math.round((totalHoldSecs / targetSecs) * 100))}%)</span>
+            </div>
+          </div>
         </div>
+
+        <div class="hold-progress-bar">
+          <div class="hold-bar-good" style="width: ${goodPct}%" title="Correct: ${goodPct}%"></div>
+          <div class="hold-bar-warn" style="width: ${warnPct}%" title="Some Error: ${warnPct}%"></div>
+          <div class="hold-bar-bad" style="width: ${badPct}%" title="Completely Wrong: ${badPct}%"></div>
+        </div>
+
         <div class="hold-metrics-list">
           <div class="hold-metric-row">
-            <span class="hold-tag"><span class="hold-dot good"></span> Perfect Form</span>
+            <span class="hold-tag"><span class="hold-dot good"></span> Correct (Green)</span>
             <span class="hold-val">${goodSecs}s (${goodPct}%)</span>
           </div>
           <div class="hold-metric-row">
-            <span class="hold-tag"><span class="hold-dot warn"></span> Adjusted Form</span>
+            <span class="hold-tag"><span class="hold-dot warn"></span> Some Error (Yellow)</span>
             <span class="hold-val">${warnSecs}s (${warnPct}%)</span>
+          </div>
+          <div class="hold-metric-row">
+            <span class="hold-tag"><span class="hold-dot bad"></span> Completely Wrong (Red)</span>
+            <span class="hold-val">${badSecs}s (${badPct}%)</span>
+          </div>
+        </div>
+
+        <div class="posture-criteria-grid">
+          <div class="posture-criteria-item">
+            <div class="criteria-top">
+              <span class="criteria-name">Spine Line</span>
+              <span class="criteria-badge ${alignPct >= 70 ? 'good' : 'warn'}">${alignPct}%</span>
+            </div>
+            <span class="criteria-desc">${alignPct >= 70 ? 'Aligned' : 'Sag/Pike'}</span>
+          </div>
+          <div class="posture-criteria-item">
+            <div class="criteria-top">
+              <span class="criteria-name">Knees Up</span>
+              <span class="criteria-badge ${kneesPct >= 80 ? 'good' : 'bad'}">${kneesPct}%</span>
+            </div>
+            <span class="criteria-desc">${kneesPct >= 80 ? 'Off Floor' : 'Dropped'}</span>
+          </div>
+          <div class="posture-criteria-item">
+            <div class="criteria-top">
+              <span class="criteria-name">90° Arms</span>
+              <span class="criteria-badge ${elbowsPct >= 70 ? 'good' : 'warn'}">${elbowsPct}%</span>
+            </div>
+            <span class="criteria-desc">${elbowsPct >= 70 ? 'Optimal' : 'Adjust'}</span>
           </div>
         </div>
       `;
@@ -2705,10 +2899,14 @@ function renderSummary(r) {
 
     $("sum-flags").innerHTML = "";
     let cueText = "Great effort.";
-    if (plankDominantFaults["sag"] && plankDominantFaults["sag"] > (plankDominantFaults["pike"] || 0)) {
+    if (plankDominantFaults["severe_sag"] || (plankDominantFaults["sag"] && plankDominantFaults["sag"] > (plankDominantFaults["pike"] || 0))) {
       cueText = "Primary deviation: Hip Sag — focus on engaging your core and lifting hips to align with shoulders.";
-    } else if (plankDominantFaults["pike"]) {
+    } else if (plankDominantFaults["severe_pike"] || plankDominantFaults["pike"]) {
       cueText = "Primary deviation: Hip Pike — focus on lowering your hips slightly to maintain a flat, neutral spine.";
+    } else if (plankDominantFaults["knees_on_floor"]) {
+      cueText = "Primary deviation: Knees on floor — keep your quads flexed and push through toes to keep knees elevated.";
+    } else if (plankDominantFaults["pushup_arms"] || plankDominantFaults["elbow_angle"]) {
+      cueText = "Primary deviation: Elbow Angle — keep elbows directly under shoulders at a 90° angle on forearms.";
     } else if (goodPct >= 80) {
       cueText = "Excellent stamina and straight-line posture throughout your hold!";
     }
@@ -2759,9 +2957,89 @@ function renderSummary(r) {
 }
 
 // ---------------------------------------------------------------------------
+// Plank target time modal setup
+function updatePlankTargetDisplay(secs) {
+  plankTargetSeconds = secs;
+  const valEl = $("plank-target-val");
+  if (valEl) valEl.textContent = String(secs);
+  document.querySelectorAll(".plank-chip").forEach((chip) => {
+    const chipTime = parseInt(chip.dataset.time, 10);
+    if (chipTime === secs) {
+      chip.classList.add("active");
+    } else {
+      chip.classList.remove("active");
+    }
+  });
+}
+
+function openPlankModal() {
+  const modal = $("plank-timer-modal");
+  if (!modal) {
+    startSet("plank", plankTargetSeconds);
+    return;
+  }
+  updatePlankTargetDisplay(plankTargetSeconds);
+  modal.hidden = false;
+}
+
+function closePlankModal() {
+  const modal = $("plank-timer-modal");
+  if (modal) modal.hidden = true;
+}
+
+const modalCloseBtn = $("plank-modal-close");
+if (modalCloseBtn) modalCloseBtn.addEventListener("click", closePlankModal);
+
+const plankModalOverlay = $("plank-timer-modal");
+if (plankModalOverlay) {
+  plankModalOverlay.addEventListener("click", (e) => {
+    if (e.target === plankModalOverlay) closePlankModal();
+  });
+}
+
+const timeMinusBtn = $("plank-time-minus");
+if (timeMinusBtn) {
+  timeMinusBtn.addEventListener("click", () => {
+    const next = Math.max(5, plankTargetSeconds - 5);
+    updatePlankTargetDisplay(next);
+  });
+}
+
+const timePlusBtn = $("plank-time-plus");
+if (timePlusBtn) {
+  timePlusBtn.addEventListener("click", () => {
+    const next = Math.min(300, plankTargetSeconds + 5);
+    updatePlankTargetDisplay(next);
+  });
+}
+
+document.querySelectorAll(".plank-chip").forEach((chip) => {
+  chip.addEventListener("click", () => {
+    const t = parseInt(chip.dataset.time, 10);
+    if (!isNaN(t)) {
+      updatePlankTargetDisplay(t);
+    }
+  });
+});
+
+const startPlankBtn = $("btn-start-plank");
+if (startPlankBtn) {
+  startPlankBtn.addEventListener("click", () => {
+    closePlankModal();
+    startSet("plank", plankTargetSeconds);
+  });
+}
+
+// ---------------------------------------------------------------------------
 // wire up
 document.querySelectorAll(".exercise-card").forEach((btn) => {
-  btn.addEventListener("click", () => startSet(btn.dataset.exercise));
+  btn.addEventListener("click", () => {
+    if (btn.dataset.exercise === "plank") {
+      openPlankModal();
+    } else {
+      startSet(btn.dataset.exercise);
+    }
+  });
 });
 $("btn-stop").addEventListener("click", stopSet);
 $("btn-back").addEventListener("click", backToPicker);
